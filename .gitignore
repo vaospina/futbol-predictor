@@ -1,0 +1,13 @@
+.env
+*.pyc
+__pycache__/
+*.log
+backfill.log
+*.pkl
+models/*.pkl
+models/saved/
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/

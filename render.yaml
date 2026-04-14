@@ -1,0 +1,26 @@
+services:
+  - type: worker
+    name: futbol-predictor
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    autoDeploy: true
+    envVars:
+      - key: API_FOOTBALL_KEY
+        sync: false
+      - key: API_FOOTBALL_HOST
+        value: v3.football.api-sports.io
+      - key: DATABASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: TIMEZONE
+        value: America/Bogota
+      - key: LOG_LEVEL
+        value: INFO
+      - key: PYTHON_VERSION
+        value: 3.11.9
