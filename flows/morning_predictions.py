@@ -171,7 +171,7 @@ def run_daily_predictions():
                     for shooter in top_shooters:
                         if shooter["team_name"] not in (home_team, away_team):
                             continue
-                        player_feats = build_player_features(shooter["player_id"], features)
+                        player_feats = build_player_features(shooter["player_id"], features, before_date=today)
                         if player_feats is None:
                             continue
 

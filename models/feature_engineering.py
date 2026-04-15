@@ -53,8 +53,8 @@ def build_match_features(match: dict, sentiment_home: dict = None, sentiment_awa
     features["home_shots_on_target_avg"] = _avg_stat(home_matches_h, "home_shots_on_target")
     features["away_shots_on_target_avg"] = _avg_stat(away_matches_a, "away_shots_on_target")
 
-    # === Head to head ===
-    h2h = get_h2h_matches(home_id, away_id, 5)
+    # === Head to head (solo partidos anteriores a match_date) ===
+    h2h = get_h2h_matches(home_id, away_id, 5, before_date=match_date)
     features["h2h_home_wins"] = sum(
         1 for m in h2h
         if (m["home_team_id"] == home_id and (m.get("home_score") or 0) > (m.get("away_score") or 0))
@@ -124,9 +124,13 @@ def build_corners_features(match_features: dict) -> dict:
     return {k: match_features.get(k, 0) for k in keys}
 
 
-def build_player_features(player_id: int, match_features: dict) -> dict:
-    """Features para el modelo de shots on target de un jugador."""
-    recent = get_player_recent_stats(player_id, 10)
+def build_player_features(player_id: int, match_features: dict, before_date=None) -> dict:
+    """Features para el modelo de shots on target de un jugador.
+
+    before_date: si se provee, sólo usa estadísticas de partidos estrictamente
+    anteriores. Esencial para evitar data leakage durante entrenamiento.
+    """
+    recent = get_player_recent_stats(player_id, 10, before_date=before_date)
 
     if not recent:
         return None

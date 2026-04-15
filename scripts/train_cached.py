@@ -110,18 +110,24 @@ def install_patches(cache):
         filtered = [m for m in lst if m["_date"] and m["_date"] < before]
         return list(reversed(filtered[-n:]))
 
-    def get_h2h_matches(t1, t2, n=5):
+    def get_h2h_matches(t1, t2, n=5, before_date=None):
+        before = _to_date(before_date) or date.today()
         lst = all_idx.get(t1, [])
         both = [
             m for m in lst
-            if (m.get("home_team_id") == t1 and m.get("away_team_id") == t2)
-            or (m.get("home_team_id") == t2 and m.get("away_team_id") == t1)
+            if m["_date"] and m["_date"] < before
+            and (
+                (m.get("home_team_id") == t1 and m.get("away_team_id") == t2)
+                or (m.get("home_team_id") == t2 and m.get("away_team_id") == t1)
+            )
         ]
         return list(reversed(both[-n:]))
 
-    def get_player_recent_stats(player_id, n=10):
+    def get_player_recent_stats(player_id, n=10, before_date=None):
+        before = _to_date(before_date) or date.today()
         lst = player_idx.get(player_id, [])
-        return list(reversed(lst[-n:]))
+        filtered = [p for p in lst if p["_date"] and p["_date"] < before]
+        return list(reversed(filtered[-n:]))
 
     def get_match_odds_summary(match_id):
         return {}
@@ -153,7 +159,8 @@ def main():
     # Import después de patch para asegurar que trainer use las nuevas funciones
     from models.trainer import train_all_models
     logger.info("Iniciando train_all_models con cache...")
-    results = train_all_models("v20260414_initial")
+    version = datetime.now().strftime("v%Y%m%d_%H%M")
+    results = train_all_models(version)
     logger.info("=== RESULTS ===")
     logger.info(json.dumps(results, indent=2, default=str))
     print(json.dumps(results, indent=2, default=str))

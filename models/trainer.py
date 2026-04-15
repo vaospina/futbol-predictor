@@ -89,12 +89,15 @@ def prepare_training_data_corners():
 
 
 def prepare_training_data_shots():
-    """Prepara datos de entrenamiento para el modelo de shots."""
+    """Prepara datos de entrenamiento para el modelo de shots.
+
+    Usa SOLO partidos anteriores a la fecha del partido (sin leakage de
+    stats del mismo partido ni de partidos futuros).
+    """
+    from datetime import date as _date
     players = fetch_all(
         """SELECT ps.*, m.home_team_id, m.away_team_id, m.home_team, m.away_team,
-                  m.league_id, m.home_corners, m.away_corners,
-                  m.home_shots_on_target AS match_home_sot,
-                  m.away_shots_on_target AS match_away_sot
+                  m.league_id
         FROM player_stats ps
         JOIN matches m ON ps.match_id = m.id
         WHERE ps.shots_on_target IS NOT NULL AND ps.minutes_played > 45
@@ -107,13 +110,26 @@ def prepare_training_data_shots():
 
     for p in players:
         try:
-            match_features = {
-                "home_shots_on_target_avg": p.get("match_home_sot") or 0,
-                "away_shots_on_target_avg": p.get("match_away_sot") or 0,
-                "is_derby": 0,
-                "position_difference": 0,
+            match_date = p.get("match_date")
+            if isinstance(match_date, str):
+                match_date = _date.fromisoformat(match_date[:10])
+            elif hasattr(match_date, "date"):
+                match_date = match_date.date()
+
+            # Features del equipo calculadas SOLO con partidos previos
+            mock_match = {
+                "home_team_id": p.get("home_team_id"),
+                "away_team_id": p.get("away_team_id"),
+                "home_team": p.get("home_team"),
+                "away_team": p.get("away_team"),
+                "match_date": match_date,
+                "id": p.get("match_id"),
             }
-            player_features = build_player_features(p["player_id"], match_features)
+            team_feats = build_match_features(mock_match)
+
+            player_features = build_player_features(
+                p["player_id"], team_feats, before_date=match_date
+            )
             if player_features is None:
                 continue
 

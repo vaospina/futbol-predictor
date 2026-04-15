@@ -112,14 +112,15 @@ def get_team_away_matches(team_id: int, n: int = 10, before_date: date = None):
     )
 
 
-def get_h2h_matches(team1_id: int, team2_id: int, n: int = 5):
+def get_h2h_matches(team1_id: int, team2_id: int, n: int = 5, before_date: date = None):
+    before = before_date or date.today()
     return fetch_all(
         """SELECT * FROM matches
         WHERE ((home_team_id = :t1 AND away_team_id = :t2)
             OR (home_team_id = :t2 AND away_team_id = :t1))
-          AND status = 'finished'
+          AND status = 'finished' AND DATE(match_date) < :bd
         ORDER BY match_date DESC LIMIT :n""",
-        {"t1": team1_id, "t2": team2_id, "n": n}
+        {"t1": team1_id, "t2": team2_id, "n": n, "bd": before}
     )
 
 
@@ -309,12 +310,13 @@ def upsert_player_stat(stat: dict):
     execute_query(query, stat)
 
 
-def get_player_recent_stats(player_id: int, n: int = 10):
+def get_player_recent_stats(player_id: int, n: int = 10, before_date: date = None):
+    before = before_date or date.today()
     return fetch_all(
         """SELECT * FROM player_stats
-        WHERE player_id = :pid
+        WHERE player_id = :pid AND match_date < :bd
         ORDER BY match_date DESC LIMIT :n""",
-        {"pid": player_id, "n": n}
+        {"pid": player_id, "n": n, "bd": before}
     )
 
 
