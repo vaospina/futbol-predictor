@@ -54,9 +54,9 @@ def main():
         replace_existing=True,
     )
 
-    logger.info("Scheduler iniciado con los siguientes jobs:")
+    logger.info("Scheduler configurado con los siguientes jobs:")
     for job in scheduler.get_jobs():
-        logger.info(f"  {job.id} -> next run: {job.next_run_time}")
+        logger.info(f"  {job.id} -> trigger: {job.trigger}")
 
     try:
         send_telegram("\U0001f7e2 *futbol-predictor* worker iniciado en Render")
