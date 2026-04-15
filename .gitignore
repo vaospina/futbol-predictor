@@ -6,8 +6,6 @@ backfill.log
 *.pkl
 models/*.pkl
 models/saved/
-saved_models/
-*.joblib
 .venv/
 venv/
 .DS_Store
