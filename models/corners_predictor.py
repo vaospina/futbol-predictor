@@ -7,7 +7,7 @@ import numpy as np
 import joblib
 import os
 from xgboost import XGBRegressor
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from scipy.stats import norm
 from models.feature_engineering import CORNERS_FEATURE_NAMES
 from utils.logger import get_logger
@@ -39,8 +39,9 @@ class CornersPredictor:
             random_state=42,
         )
 
-        cv_r2 = cross_val_score(self.model, X, y, cv=5, scoring="r2")
-        cv_mae = cross_val_score(self.model, X, y, cv=5, scoring="neg_mean_absolute_error")
+        tscv = TimeSeriesSplit(n_splits=5)
+        cv_r2 = cross_val_score(self.model, X, y, cv=tscv, scoring="r2")
+        cv_mae = cross_val_score(self.model, X, y, cv=tscv, scoring="neg_mean_absolute_error")
 
         self.model.fit(X, y)
 

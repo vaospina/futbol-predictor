@@ -2,11 +2,12 @@
 Backfill histórico desde API-Football hacia Supabase.
 
 Carga fixtures + estadísticas + player stats de todas las ligas configuradas
-para un rango de fechas dado.
+para un rango de fechas dado y una temporada específica.
 
 Uso:
-    python -m scripts.backfill                        # 2025-08-01 -> hoy
-    python -m scripts.backfill 2026-01-01 2026-04-14  # rango custom
+    python -m scripts.backfill                                    # 2025-08-01 -> hoy, season=CURRENT
+    python -m scripts.backfill 2026-01-01 2026-04-14              # rango custom, season=CURRENT
+    python -m scripts.backfill 2023-07-01 2024-07-31 2023         # rango + season explícita
 """
 import sys
 import time
@@ -18,7 +19,7 @@ from data.api_football import (
     parse_fixture_statistics,
     parse_player_fixture_stats,
 )
-from db.models import upsert_match, upsert_player_stat, fetch_one
+from db.models import upsert_match, upsert_player_stat, fetch_one, get_match_by_fixture_id
 from db.migrations import run_migrations
 from config.leagues import ALL_LEAGUES
 from config.settings import CURRENT_SEASON
@@ -26,7 +27,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-RATE_LIMIT_SLEEP = 0.4  # ~150 req/min, muy por debajo del límite Pro
+RATE_LIMIT_SLEEP = 0.15  # ~400 req/min, dentro del límite Pro (450/min)
 
 
 def backfill(from_date: date, to_date: date, season: int = None):
@@ -57,6 +58,16 @@ def backfill(from_date: date, to_date: date, season: int = None):
                     continue
 
                 is_finished = match_data["status"] == "finished"
+
+                # Skip si ya está completo en BD (re-runs incrementales)
+                existing = get_match_by_fixture_id(fixture_id)
+                already_complete = (
+                    existing
+                    and existing.get("status") == "finished"
+                    and existing.get("home_corners") is not None
+                )
+                if already_complete:
+                    continue
 
                 if is_finished:
                     # Stats del partido (corners, shots, posesión)
@@ -126,10 +137,13 @@ def backfill(from_date: date, to_date: date, season: int = None):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3:
+    season_arg = None
+    if len(sys.argv) >= 3:
         from_d = datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
         to_d = datetime.strptime(sys.argv[2], "%Y-%m-%d").date()
+        if len(sys.argv) >= 4:
+            season_arg = int(sys.argv[3])
     else:
         from_d = date(2025, 8, 1)
         to_d = date.today()
-    backfill(from_d, to_d)
+    backfill(from_d, to_d, season=season_arg)

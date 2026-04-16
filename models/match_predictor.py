@@ -6,7 +6,7 @@ import numpy as np
 import joblib
 import os
 from xgboost import XGBClassifier
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.preprocessing import LabelEncoder
 from models.feature_engineering import MATCH_FEATURE_NAMES
 from utils.logger import get_logger
@@ -49,10 +49,11 @@ class MatchPredictor:
             random_state=42,
         )
 
-        # Cross-validation
-        cv_accuracy = cross_val_score(self.model, X, y_encoded, cv=5, scoring="accuracy")
-        cv_f1 = cross_val_score(self.model, X, y_encoded, cv=5, scoring="f1_macro")
-        cv_logloss = cross_val_score(self.model, X, y_encoded, cv=5, scoring="neg_log_loss")
+        # Time-series CV: X debe estar ordenado cronológicamente (asc).
+        tscv = TimeSeriesSplit(n_splits=5)
+        cv_accuracy = cross_val_score(self.model, X, y_encoded, cv=tscv, scoring="accuracy")
+        cv_f1 = cross_val_score(self.model, X, y_encoded, cv=tscv, scoring="f1_macro")
+        cv_logloss = cross_val_score(self.model, X, y_encoded, cv=tscv, scoring="neg_log_loss")
 
         # Entrenar con todos los datos
         self.model.fit(X, y_encoded)

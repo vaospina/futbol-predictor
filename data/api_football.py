@@ -109,6 +109,11 @@ class ApiFootballClient:
         data = self._get("fixtures/players", {"fixture": fixture_id})
         return data.get("response", [])
 
+    def get_fixture_by_id(self, fixture_id: int):
+        data = self._get("fixtures", {"id": fixture_id})
+        response = data.get("response", [])
+        return response[0] if response else None
+
     def get_season_fixtures(self, league_id: int, season: int = None):
         season = season or CURRENT_SEASON
         params = {"league": league_id, "season": season}

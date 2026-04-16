@@ -1,19 +1,16 @@
 """
 main.py - Entry point del sistema de predicción deportiva.
 
-Worker puro para Render Background Worker: sin Flask, sin HTTP.
-Sólo APScheduler bloqueante ejecutando los flujos programados.
+Worker puro para Render Background Worker.
 
 Flujos programados (UTC):
   - 11:00 UTC (6:00 AM Colombia): Predicciones diarias
-  - 03:00 UTC (10:00 PM Colombia): Evaluación de resultados
-  - Domingos 07:00 UTC (2:00 AM Colombia): Re-entrenamiento semanal
+  - Cada 30 min 19:00–05:30 UTC (2:00 PM–12:30 AM Colombia): Evaluación
 """
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from flows.morning_predictions import run_daily_predictions
-from flows.evening_results import run_daily_results
-from flows.weekly_retrain import run_weekly_retrain
+from flows.evening_results import run_evaluation_check
 from db.migrations import run_migrations
 from notifications.telegram import send_telegram
 from utils.logger import get_logger
@@ -28,6 +25,7 @@ def main():
 
     scheduler = BlockingScheduler(timezone="UTC")
 
+    # 6:00 AM Colombia = 11:00 UTC
     scheduler.add_job(
         run_daily_predictions,
         "cron",
@@ -36,21 +34,14 @@ def main():
         id="daily_predictions",
         replace_existing=True,
     )
+
+    # Evaluación cada 30 min: 2PM–12:30AM Colombia = 19:00–05:30 UTC
     scheduler.add_job(
-        run_daily_results,
+        run_evaluation_check,
         "cron",
-        hour=3,
-        minute=0,
-        id="daily_results",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        run_weekly_retrain,
-        "cron",
-        day_of_week="sun",
-        hour=7,
-        minute=0,
-        id="weekly_retrain",
+        hour="19-23,0-5",
+        minute="0,30",
+        id="evaluation_check",
         replace_existing=True,
     )
 

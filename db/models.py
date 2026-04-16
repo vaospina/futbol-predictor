@@ -156,11 +156,30 @@ def get_pending_predictions(pred_date: date):
     return fetch_all(
         """SELECT p.*, m.home_team, m.away_team, m.api_fixture_id,
                   m.home_score, m.away_score, m.home_corners, m.away_corners,
-                  m.home_shots_on_target, m.away_shots_on_target, m.status
+                  m.home_shots_on_target, m.away_shots_on_target, m.status,
+                  m.league_id, m.league_name, m.season,
+                  m.home_team_id, m.away_team_id
         FROM predictions p
         JOIN matches m ON p.match_id = m.id
         WHERE p.prediction_date = :d AND p.result IS NULL""",
         {"d": pred_date}
+    )
+
+
+def get_recent_pending_predictions(lookback_days: int = 2):
+    from datetime import timedelta
+    from_date = date.today() - timedelta(days=lookback_days)
+    return fetch_all(
+        """SELECT p.*, m.home_team, m.away_team, m.api_fixture_id,
+                  m.home_score, m.away_score, m.home_corners, m.away_corners,
+                  m.home_shots_on_target, m.away_shots_on_target, m.status,
+                  m.league_id, m.league_name, m.season,
+                  m.home_team_id, m.away_team_id
+        FROM predictions p
+        JOIN matches m ON p.match_id = m.id
+        WHERE p.prediction_date >= :from_date AND p.result IS NULL
+        ORDER BY p.prediction_date, p.id""",
+        {"from_date": from_date}
     )
 
 

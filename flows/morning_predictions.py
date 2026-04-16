@@ -24,7 +24,7 @@ from db.models import (
 )
 from notifications.telegram import send_prediction_message, send_telegram
 from config.leagues import ALL_LEAGUES
-from config.settings import MAX_DAILY_PREDICTIONS, CURRENT_SEASON
+from config.settings import MAX_DAILY_PREDICTIONS, CURRENT_SEASON, ENABLE_CORNERS_MODEL
 from utils.helpers import today_colombia
 from utils.logger import get_logger
 
@@ -143,7 +143,7 @@ def run_daily_predictions():
                         })
 
                 # --- Prediccion Corners ---
-                if corners_predictor.model:
+                if corners_predictor.model and ENABLE_CORNERS_MODEL:
                     corner_features = build_corners_features(features)
                     X_corners = np.array([[corner_features.get(f, 0) for f in CORNERS_FEATURE_NAMES]], dtype=np.float32)
                     preds_corners = corners_predictor.predict(X_corners, [9.5])

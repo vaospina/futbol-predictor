@@ -17,6 +17,15 @@ def send_telegram(message: str, parse_mode: str = "Markdown"):
         if response.status_code == 200:
             logger.info("Mensaje Telegram enviado exitosamente")
             return True
+        elif response.status_code == 400 and parse_mode:
+            logger.warning(f"Error Markdown Telegram, reintentando sin formato")
+            payload["parse_mode"] = None
+            retry = requests.post(url, json=payload, timeout=10)
+            if retry.status_code == 200:
+                logger.info("Mensaje Telegram enviado (sin formato)")
+                return True
+            logger.error(f"Error Telegram retry ({retry.status_code}): {retry.text}")
+            return False
         else:
             logger.error(f"Error Telegram ({response.status_code}): {response.text}")
             return False
