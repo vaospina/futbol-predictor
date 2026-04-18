@@ -10,8 +10,9 @@ def send_telegram(message: str, parse_mode: str = "Markdown"):
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": message,
-        "parse_mode": parse_mode,
     }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
@@ -19,7 +20,7 @@ def send_telegram(message: str, parse_mode: str = "Markdown"):
             return True
         elif response.status_code == 400 and parse_mode:
             logger.warning(f"Error Markdown Telegram, reintentando sin formato")
-            payload["parse_mode"] = None
+            payload.pop("parse_mode", None)
             retry = requests.post(url, json=payload, timeout=10)
             if retry.status_code == 200:
                 logger.info("Mensaje Telegram enviado (sin formato)")

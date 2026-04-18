@@ -8,7 +8,10 @@ Corre cada 30 min (2PM–12:30AM Colombia). Para cada predicción pendiente:
   4. Cuando TODAS las predicciones de un día se resuelven → consolida + retrain
 """
 from datetime import date, timedelta
-from data.api_football import ApiFootballClient, parse_fixture, parse_fixture_statistics
+from data.api_football import (
+    ApiFootballClient, parse_fixture, parse_fixture_statistics,
+    parse_player_fixture_stats,
+)
 from db.models import (
     get_recent_pending_predictions, get_predictions_by_date,
     update_prediction_result, upsert_match,
@@ -84,13 +87,18 @@ def run_evaluation_check():
                         )
                         continue
 
+                # Para player_shots: obtener stats INDIVIDUALES del jugador
                 if market == "player_shots":
-                    if match_data.get("home_shots_on_target") is None:
+                    player_sot = _fetch_player_sot(api, fixture_id, pred["prediction"])
+                    if player_sot is None:
                         logger.warning(
                             f"  {pred['home_team']} vs {pred['away_team']}: "
-                            f"sin stats de shots, skip"
+                            f"sin stats individuales del jugador, skip"
                         )
                         continue
+                    pred["player_sot"] = player_sot["sot"]
+                    pred["player_minutes"] = player_sot["minutes"]
+                    pred["player_name_found"] = player_sot["name"]
 
                 # Actualizar match en BD con datos frescos
                 upsert_match(match_data)
@@ -272,16 +280,91 @@ def _evaluate_prediction(pred: dict) -> tuple:
         return ("win" if won else "loss"), actual
 
     elif market == "player_shots":
-        home_sot = pred.get("home_shots_on_target") or 0
-        away_sot = pred.get("away_shots_on_target") or 0
-        actual = f"SOT: {home_sot}-{away_sot}"
-        if "+1.5" in prediction:
-            won = max(home_sot, away_sot) >= 2
-        else:
-            won = False
+        player_sot = pred.get("player_sot")
+        player_minutes = pred.get("player_minutes", 0)
+        player_found = pred.get("player_name_found", "?")
+
+        if player_sot is None:
+            return None, "no_player_stats"
+
+        if player_minutes is None or player_minutes == 0:
+            logger.info(
+                f"  Player {player_found}: mins=0, no jugó -> LOSS"
+            )
+            return "loss", f"{player_found}: no jugó (0 min)"
+
+        # Extraer línea del texto de predicción (e.g., "+1.5 disparos")
+        line = 1.5
+        if "+0.5" in prediction:
+            line = 0.5
+        elif "+1.5" in prediction:
+            line = 1.5
+        elif "+2.5" in prediction:
+            line = 2.5
+
+        won = player_sot > line
+        actual = f"{player_found}: SOT={player_sot}, line={line}"
+
+        logger.info(
+            f"  Player {player_found}: "
+            f"shots_on_target={player_sot}, line={line}, "
+            f"result={'WIN' if won else 'LOSS'}"
+        )
+
         return ("win" if won else "loss"), actual
 
     return None, "unknown_market"
+
+
+def _normalize(s: str) -> str:
+    """Normaliza nombre quitando acentos y pasando a minúsculas."""
+    import unicodedata
+    nfkd = unicodedata.normalize("NFKD", s)
+    return "".join(c for c in nfkd if not unicodedata.combining(c)).lower().strip()
+
+
+def _fetch_player_sot(api, fixture_id: int, prediction_text: str) -> dict | None:
+    """Busca las stats individuales del jugador en el fixture vía API.
+    Retorna {"name": ..., "sot": int, "minutes": int} o None."""
+
+    # Extraer nombre del jugador del texto: "Vinícius Júnior +1.5 disparos a puerta"
+    for sep in [" +0.5", " +1.5", " +2.5", " -0.5", " -1.5", " -2.5"]:
+        if sep in prediction_text:
+            player_name = prediction_text.split(sep)[0].strip()
+            break
+    else:
+        logger.warning(f"No se pudo extraer nombre de jugador de: {prediction_text}")
+        return None
+
+    players_raw = api.get_fixture_player_stats(fixture_id)
+    if not players_raw:
+        return None
+
+    players = parse_player_fixture_stats(players_raw)
+    if not players:
+        return None
+
+    player_norm = _normalize(player_name)
+
+    # Búsqueda exacta primero, luego parcial
+    for p in players:
+        if _normalize(p["player_name"]) == player_norm:
+            return {"name": p["player_name"], "sot": p["shots_on_target"], "minutes": p["minutes_played"]}
+
+    for p in players:
+        api_norm = _normalize(p["player_name"])
+        if player_norm in api_norm or api_norm in player_norm:
+            return {"name": p["player_name"], "sot": p["shots_on_target"], "minutes": p["minutes_played"]}
+
+    # Buscar por apellido (última palabra)
+    surname = player_norm.split()[-1] if player_norm else ""
+    if len(surname) > 2:
+        for p in players:
+            if surname in _normalize(p["player_name"]):
+                return {"name": p["player_name"], "sot": p["shots_on_target"], "minutes": p["minutes_played"]}
+
+    logger.warning(f"Jugador '{player_name}' no encontrado en fixture {fixture_id}")
+    return {"name": player_name, "sot": 0, "minutes": 0}
 
 
 def _get_1x2_result(home_score, away_score, home_team, away_team):
