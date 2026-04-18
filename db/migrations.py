@@ -143,12 +143,6 @@ INSERT INTO config (key, value) VALUES
     ('model_active_shots', 'v1.0')
 ON CONFLICT (key) DO NOTHING;
 
--- Columna data_source en predictions (puede no existir en tablas antiguas)
-DO $$ BEGIN
-    ALTER TABLE predictions ADD COLUMN data_source VARCHAR(20) DEFAULT 'api_real';
-EXCEPTION WHEN duplicate_column THEN NULL;
-END $$;
-
 -- Indices para mejorar rendimiento
 CREATE INDEX IF NOT EXISTS idx_matches_fixture ON matches(api_fixture_id);
 CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(match_date);
@@ -163,6 +157,11 @@ CREATE INDEX IF NOT EXISTS idx_news_team ON news_sentiment(team_id);
 """
 
 
+EXTRA_MIGRATIONS = [
+    "ALTER TABLE predictions ADD COLUMN data_source VARCHAR(20) DEFAULT 'api_real'",
+]
+
+
 def run_migrations():
     logger.info("Ejecutando migraciones...")
     try:
@@ -171,6 +170,11 @@ def run_migrations():
                 statement = statement.strip()
                 if statement:
                     conn.execute(text(statement))
+            for stmt in EXTRA_MIGRATIONS:
+                try:
+                    conn.execute(text(stmt))
+                except Exception:
+                    pass
             conn.commit()
         logger.info("Migraciones ejecutadas exitosamente")
         return True

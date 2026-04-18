@@ -331,6 +331,26 @@ def upsert_player_stat(stat: dict):
     execute_query(query, stat)
 
 
+def batch_upsert_player_stats(stats: list):
+    if not stats:
+        return
+    query = """
+    INSERT INTO player_stats (
+        player_id, player_name, team_id, team_name,
+        league_id, season, match_id, match_date,
+        shots_on_target, shots_total, minutes_played
+    ) VALUES (
+        :player_id, :player_name, :team_id, :team_name,
+        :league_id, :season, :match_id, :match_date,
+        :shots_on_target, :shots_total, :minutes_played
+    )
+    ON CONFLICT DO NOTHING
+    """
+    with engine.connect() as conn:
+        conn.execute(text(query), stats)
+        conn.commit()
+
+
 def get_player_recent_stats(player_id: int, n: int = 10, before_date: date = None):
     before = before_date or date.today()
     return fetch_all(

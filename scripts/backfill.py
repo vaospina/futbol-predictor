@@ -19,7 +19,7 @@ from data.api_football import (
     parse_fixture_statistics,
     parse_player_fixture_stats,
 )
-from db.models import upsert_match, upsert_player_stat, fetch_one, get_match_by_fixture_id
+from db.models import upsert_match, batch_upsert_player_stats, fetch_one, get_match_by_fixture_id
 from db.migrations import run_migrations
 from config.leagues import ALL_LEAGUES
 from config.settings import CURRENT_SEASON
@@ -36,6 +36,16 @@ def backfill(from_date: date, to_date: date, season: int = None):
 
     logger.info(f"=== BACKFILL {from_date} -> {to_date} (season={season}) ===")
     run_migrations()
+
+    # Pre-load existing complete fixtures to skip them without individual DB queries
+    from db.models import fetch_all
+    existing_complete = set()
+    rows = fetch_all(
+        "SELECT api_fixture_id FROM matches WHERE status = 'finished' AND home_corners IS NOT NULL"
+    )
+    for r in rows:
+        existing_complete.add(r["api_fixture_id"])
+    logger.info(f"  {len(existing_complete)} fixtures ya completos en BD (se saltarán)")
 
     total_fixtures = 0
     total_finished = 0
@@ -59,14 +69,7 @@ def backfill(from_date: date, to_date: date, season: int = None):
 
                 is_finished = match_data["status"] == "finished"
 
-                # Skip si ya está completo en BD (re-runs incrementales)
-                existing = get_match_by_fixture_id(fixture_id)
-                already_complete = (
-                    existing
-                    and existing.get("status") == "finished"
-                    and existing.get("home_corners") is not None
-                )
-                if already_complete:
+                if fixture_id in existing_complete:
                     continue
 
                 if is_finished:
@@ -83,16 +86,21 @@ def backfill(from_date: date, to_date: date, season: int = None):
 
                 if is_finished:
                     total_finished += 1
-                    # Player stats
                     time.sleep(RATE_LIMIT_SLEEP)
                     players_raw = api.get_fixture_player_stats(fixture_id)
                     players = parse_player_fixture_stats(players_raw)
+                    batch = []
+                    match_date_val = (
+                        match_data["match_date"][:10]
+                        if isinstance(match_data["match_date"], str)
+                        else match_data["match_date"]
+                    )
                     for p in players:
                         if not p.get("player_id"):
                             continue
                         if (p.get("minutes_played") or 0) < 1:
                             continue
-                        upsert_player_stat({
+                        batch.append({
                             "player_id": p["player_id"],
                             "player_name": p["player_name"],
                             "team_id": p["team_id"],
@@ -100,14 +108,14 @@ def backfill(from_date: date, to_date: date, season: int = None):
                             "league_id": league_id,
                             "season": season,
                             "match_id": match_id,
-                            "match_date": match_data["match_date"][:10]
-                                if isinstance(match_data["match_date"], str)
-                                else match_data["match_date"],
+                            "match_date": match_date_val,
                             "shots_on_target": p["shots_on_target"],
                             "shots_total": p["shots_total"],
                             "minutes_played": p["minutes_played"],
                         })
-                        total_players += 1
+                    if batch:
+                        batch_upsert_player_stats(batch)
+                        total_players += len(batch)
 
             except Exception as e:
                 logger.error(f"  Error fixture {fixture_data.get('fixture', {}).get('id')}: {e}")
