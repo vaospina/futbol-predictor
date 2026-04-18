@@ -4,7 +4,7 @@ Genera predicciones para los partidos del dia.
 """
 import numpy as np
 from datetime import date
-from data.api_football import ApiFootballClient, parse_fixture, parse_fixture_statistics
+from data.api_football import ApiFootballClient, parse_fixture, parse_fixture_statistics, parse_lineups
 from data.news_collector import fetch_team_news
 from data.sentiment import analyze_team_news
 from data.odds_collector import collect_odds_for_fixture
@@ -190,16 +190,50 @@ def run_daily_predictions():
                             "expected_value": ev,
                         })
 
-                # --- Prediccion Shots (top shooters) ---
+                # --- Prediccion Shots (top shooters con verificación de lineup) ---
                 if shots_predictor.model:
                     league_id = match_data["league_id"]
                     top_shooters = get_top_shooters_by_league(league_id, CURRENT_SEASON, 3)
-                    for shooter in top_shooters:
-                        if shooter["team_name"] not in (home_team, away_team):
+
+                    relevant_shooters = [
+                        s for s in top_shooters
+                        if s["team_name"] in (home_team, away_team)
+                    ]
+
+                    lineup_status = {}
+                    if relevant_shooters:
+                        lineups_raw = api.get_fixture_lineups(fixture_id)
+                        if lineups_raw:
+                            lineup_status = parse_lineups(lineups_raw)
+
+                    for shooter in relevant_shooters:
+                        pid = shooter["player_id"]
+                        status = lineup_status.get(pid)
+
+                        if not lineup_status:
+                            logger.info(
+                                f"  Lineups no disponibles para {home_team} vs {away_team}, "
+                                f"saltando shots"
+                            )
+                            break
+
+                        if status is None:
+                            logger.info(
+                                f"  {shooter['player_name']} no convocado, descartado"
+                            )
                             continue
+
+                        if status == "bench":
+                            logger.info(
+                                f"  {shooter['player_name']} en banco, descartado"
+                            )
+                            continue
+
                         player_feats = build_player_features(shooter["player_id"], features, before_date=today)
                         if player_feats is None:
                             continue
+
+                        player_feats["is_starter"] = 1
 
                         X_shots = np.array([[player_feats.get(f, 0) for f in PLAYER_FEATURE_NAMES]], dtype=np.float32)
                         preds_shots = shots_predictor.predict(X_shots, [1.5])
@@ -218,6 +252,7 @@ def run_daily_predictions():
                                 "odds": 1.35,
                                 "expected_value": ev,
                                 "player_name": shooter["player_name"],
+                                "player_id": pid,
                             })
 
             except Exception as e:

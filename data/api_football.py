@@ -158,6 +158,21 @@ class ApiFootballClient:
         return data.get("response", [])
 
 
+def parse_lineups(lineups_data: list) -> dict:
+    """Parses lineups into {player_id: 'starter'|'bench'} mapping."""
+    result = {}
+    for team_data in lineups_data:
+        for p in team_data.get("startXI", []):
+            pid = p.get("player", {}).get("id")
+            if pid:
+                result[pid] = "starter"
+        for p in team_data.get("substitutes", []):
+            pid = p.get("player", {}).get("id")
+            if pid:
+                result[pid] = "bench"
+    return result
+
+
 def parse_fixture(fixture_data: dict) -> dict:
     fixture = fixture_data.get("fixture", {})
     league = fixture_data.get("league", {})
