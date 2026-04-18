@@ -9,6 +9,9 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_FAILURE_COUNT = 0
+_ALERT_SENT = False
+
 
 class ApiFootballClient:
     def __init__(self):
@@ -17,8 +20,10 @@ class ApiFootballClient:
             "x-apisports-key": API_FOOTBALL_KEY,
         }
         self.requests_today = 0
+        self.api_healthy = True
 
     def _get(self, endpoint: str, params: dict = None) -> dict:
+        global _FAILURE_COUNT, _ALERT_SENT
         url = f"{self.base_url}/{endpoint}"
         try:
             response = requests.get(url, headers=self.headers, params=params, timeout=15)
@@ -27,13 +32,45 @@ class ApiFootballClient:
                 data = response.json()
                 if data.get("errors"):
                     logger.warning(f"API-Football errors: {data['errors']}")
+                _FAILURE_COUNT = 0
+                _ALERT_SENT = False
+                self.api_healthy = True
                 return data
             else:
                 logger.error(f"API-Football error ({response.status_code}): {response.text}")
-                return {"response": []}
+                self._track_failure(f"HTTP {response.status_code} en {endpoint}")
+                return {"response": [], "_api_error": True}
         except Exception as e:
             logger.error(f"Error llamando API-Football {endpoint}: {e}")
-            return {"response": []}
+            self._track_failure(f"{type(e).__name__}: {e}")
+            return {"response": [], "_api_error": True}
+
+    def _track_failure(self, reason: str):
+        global _FAILURE_COUNT, _ALERT_SENT
+        _FAILURE_COUNT += 1
+        self.api_healthy = False
+        if _FAILURE_COUNT >= 3 and not _ALERT_SENT:
+            _ALERT_SENT = True
+            try:
+                from notifications.telegram import send_telegram
+                send_telegram(
+                    f"ALERTA: API-Football ha fallado {_FAILURE_COUNT} veces consecutivas.\n"
+                    f"Ultimo error: {reason}\n"
+                    f"Las predicciones pueden no ser confiables.",
+                    parse_mode=None,
+                )
+            except Exception:
+                pass
+
+    def check_status(self) -> dict:
+        data = self._get("status")
+        response = data.get("response", {})
+        return {
+            "ok": not data.get("_api_error", False),
+            "account": response.get("account", {}),
+            "subscription": response.get("subscription", {}),
+            "requests": response.get("requests", {}),
+        }
 
     def get_fixtures_by_date(self, league_id: int, match_date: date, season: int = None):
         season = season or CURRENT_SEASON

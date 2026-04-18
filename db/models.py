@@ -130,12 +130,14 @@ def insert_prediction(pred: dict):
     query = """
     INSERT INTO predictions (
         match_id, prediction_date, market_type, prediction,
-        probability, odds, expected_value, model_version
+        probability, odds, expected_value, model_version, data_source
     ) VALUES (
         :match_id, :prediction_date, :market_type, :prediction,
-        :probability, :odds, :expected_value, :model_version
+        :probability, :odds, :expected_value, :model_version, :data_source
     ) RETURNING id
     """
+    if "data_source" not in pred:
+        pred["data_source"] = "api_real"
     result = fetch_one(query, pred)
     return result["id"] if result else None
 

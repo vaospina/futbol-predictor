@@ -43,6 +43,16 @@ def run_evaluation_check():
         logger.info(f"{len(pending)} predicciones pendientes")
         newly_evaluated = []
 
+        api_status = api.check_status()
+        if not api_status["ok"]:
+            logger.error("API-Football no responde, saltando evaluación")
+            send_telegram(
+                "ALERTA: API-Football caida durante evaluacion. "
+                "No se evaluaron predicciones en este ciclo.",
+                parse_mode=None,
+            )
+            return
+
         for pred in pending:
             try:
                 fixture_id = pred.get("api_fixture_id")

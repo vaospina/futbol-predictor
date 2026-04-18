@@ -143,6 +143,12 @@ INSERT INTO config (key, value) VALUES
     ('model_active_shots', 'v1.0')
 ON CONFLICT (key) DO NOTHING;
 
+-- Columna data_source en predictions (puede no existir en tablas antiguas)
+DO $$ BEGIN
+    ALTER TABLE predictions ADD COLUMN data_source VARCHAR(20) DEFAULT 'api_real';
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
 -- Indices para mejorar rendimiento
 CREATE INDEX IF NOT EXISTS idx_matches_fixture ON matches(api_fixture_id);
 CREATE INDEX IF NOT EXISTS idx_matches_date ON matches(match_date);

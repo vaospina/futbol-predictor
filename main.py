@@ -1,12 +1,18 @@
 """
 main.py - Entry point del sistema de predicción deportiva.
 
-Worker puro para Render Background Worker.
+Worker para Render Background Worker + health check HTTP en puerto $PORT.
 
 Flujos programados (UTC):
   - 11:00 UTC (6:00 AM Colombia): Predicciones diarias
   - Cada 30 min 19:00–05:30 UTC (2:00 PM–12:30 AM Colombia): Evaluación
 """
+import os
+import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
+
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from flows.morning_predictions import run_daily_predictions
@@ -17,11 +23,60 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_started_at = datetime.utcnow().isoformat()
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/health":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        from data.api_football import _FAILURE_COUNT
+        from db.connection import engine
+        from sqlalchemy import text
+
+        db_ok = False
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+            db_ok = True
+        except Exception:
+            pass
+
+        status = {
+            "status": "ok" if db_ok and _FAILURE_COUNT < 3 else "degraded",
+            "started_at": _started_at,
+            "checked_at": datetime.utcnow().isoformat(),
+            "database": "ok" if db_ok else "error",
+            "api_football_consecutive_failures": _FAILURE_COUNT,
+        }
+
+        code = 200 if status["status"] == "ok" else 503
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(status).encode())
+
+    def log_message(self, format, *args):
+        pass
+
+
+def _start_health_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    logger.info(f"Health check server en puerto {port}")
+    server.serve_forever()
+
 
 def main():
     logger.info("=== INICIANDO FUTBOL-PREDICTOR (worker) ===")
 
     run_migrations()
+
+    health_thread = threading.Thread(target=_start_health_server, daemon=True)
+    health_thread.start()
 
     scheduler = BlockingScheduler(timezone="UTC")
 

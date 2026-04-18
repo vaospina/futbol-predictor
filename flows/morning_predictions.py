@@ -40,6 +40,23 @@ def run_daily_predictions():
         today = today_colombia()
         threshold = get_current_threshold()
 
+        # Verificar que la API responde antes de generar predicciones
+        api_status = api.check_status()
+        if not api_status["ok"]:
+            logger.error("API-Football no responde, abortando predicciones")
+            send_telegram(
+                "ALERTA: API-Football no responde. "
+                "No se generaron predicciones hoy. "
+                "Verificar estado del servicio.",
+                parse_mode=None,
+            )
+            return
+
+        reqs = api_status.get("requests", {})
+        logger.info(
+            f"API-Football OK: {reqs.get('current', '?')}/{reqs.get('limit_day', '?')} requests"
+        )
+
         # 1. Cargar modelos
         match_predictor = MatchPredictor()
         corners_predictor = CornersPredictor()
@@ -57,6 +74,15 @@ def run_daily_predictions():
                 f["_league_info"] = league_info
             all_fixtures.extend(fixtures)
             logger.info(f"{league_info['name']}: {len(fixtures)} partidos hoy")
+
+        if not api.api_healthy:
+            logger.error("API falló durante la obtención de fixtures, abortando")
+            send_telegram(
+                "ALERTA: API-Football falló al obtener partidos. "
+                "No se generaron predicciones hoy.",
+                parse_mode=None,
+            )
+            return
 
         if not all_fixtures:
             logger.info("No hay partidos hoy en las ligas configuradas")
@@ -216,6 +242,7 @@ def run_daily_predictions():
 
         # 6. Guardar en BD
         model_version = get_model_version("1x2")
+        data_source = "api_real" if api.api_healthy else "api_degraded"
         for pred in selected:
             insert_prediction({
                 "match_id": pred["match_id"],
@@ -226,6 +253,7 @@ def run_daily_predictions():
                 "odds": pred["odds"],
                 "expected_value": pred["expected_value"],
                 "model_version": model_version,
+                "data_source": data_source,
             })
 
         # 7. Enviar Telegram
