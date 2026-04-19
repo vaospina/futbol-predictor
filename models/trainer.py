@@ -127,6 +127,10 @@ def prepare_training_data_shots():
             }
             team_feats = build_match_features(mock_match)
 
+            # Determine if player is on the home team
+            is_home = 1 if p.get("team_id") == p.get("home_team_id") else 0
+            team_feats["is_home"] = is_home
+
             player_features = build_player_features(
                 p["player_id"], team_feats, before_date=match_date
             )

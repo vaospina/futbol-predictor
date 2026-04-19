@@ -320,11 +320,11 @@ def upsert_player_stat(stat: dict):
     INSERT INTO player_stats (
         player_id, player_name, team_id, team_name,
         league_id, season, match_id, match_date,
-        shots_on_target, shots_total, minutes_played
+        shots_on_target, shots_total, goals, minutes_played
     ) VALUES (
         :player_id, :player_name, :team_id, :team_name,
         :league_id, :season, :match_id, :match_date,
-        :shots_on_target, :shots_total, :minutes_played
+        :shots_on_target, :shots_total, :goals, :minutes_played
     )
     ON CONFLICT DO NOTHING
     """
@@ -338,11 +338,11 @@ def batch_upsert_player_stats(stats: list):
     INSERT INTO player_stats (
         player_id, player_name, team_id, team_name,
         league_id, season, match_id, match_date,
-        shots_on_target, shots_total, minutes_played
+        shots_on_target, shots_total, goals, minutes_played
     ) VALUES (
         :player_id, :player_name, :team_id, :team_name,
         :league_id, :season, :match_id, :match_date,
-        :shots_on_target, :shots_total, :minutes_played
+        :shots_on_target, :shots_total, :goals, :minutes_played
     )
     ON CONFLICT DO NOTHING
     """

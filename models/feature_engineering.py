@@ -138,10 +138,12 @@ def build_player_features(player_id: int, match_features: dict, before_date=None
     sot_vals = [s.get("shots_on_target", 0) for s in recent]
     shots_vals = [s.get("shots_total", 0) for s in recent]
     mins_vals = [s.get("minutes_played", 0) for s in recent]
+    goals_vals = [s.get("goals", 0) or 0 for s in recent]
 
     last3 = recent[:3]
     sot_last3 = [s.get("shots_on_target", 0) for s in last3] if len(last3) >= 3 else sot_vals
     mins_last3 = [s.get("minutes_played", 0) for s in last3] if len(last3) >= 3 else mins_vals
+    goals_last3 = [s.get("goals", 0) or 0 for s in last3] if len(last3) >= 3 else goals_vals
 
     return {
         "player_avg_sot": np.mean(sot_vals),
@@ -153,8 +155,8 @@ def build_player_features(player_id: int, match_features: dict, before_date=None
         "opponent_goals_conceded_avg": match_features.get("away_goals_conceded_avg", 0),
         "team_shots_on_target_avg": match_features.get("home_shots_on_target_avg", 0),
         "is_derby": match_features.get("is_derby", 0),
-        "position_difference": match_features.get("position_difference", 0),
-        "is_starter": 1,
+        "is_home": match_features.get("is_home", 1),
+        "player_goals_last3": np.sum(goals_last3),
     }
 
 
@@ -299,6 +301,6 @@ PLAYER_FEATURE_NAMES = [
     "player_matches_count",
     "player_sot_last3", "player_minutes_last3",
     "opponent_goals_conceded_avg", "team_shots_on_target_avg",
-    "is_derby", "position_difference",
-    "is_starter",
+    "is_derby", "is_home",
+    "player_goals_last3",
 ]

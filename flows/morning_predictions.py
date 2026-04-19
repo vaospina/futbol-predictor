@@ -229,11 +229,11 @@ def run_daily_predictions():
                             )
                             continue
 
+                        is_home = 1 if shooter["team_name"] == home_team else 0
+                        features["is_home"] = is_home
                         player_feats = build_player_features(shooter["player_id"], features, before_date=today)
                         if player_feats is None:
                             continue
-
-                        player_feats["is_starter"] = 1
 
                         X_shots = np.array([[player_feats.get(f, 0) for f in PLAYER_FEATURE_NAMES]], dtype=np.float32)
                         preds_shots = shots_predictor.predict(X_shots, [1.5])

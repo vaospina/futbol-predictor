@@ -255,6 +255,8 @@ def parse_player_fixture_stats(players_data: list) -> list:
             shots = stats.get("shots", {}) or {}
             games = stats.get("games", {}) or {}
 
+            goals = stats.get("goals", {}) or {}
+
             result.append({
                 "player_id": player.get("id"),
                 "player_name": player.get("name"),
@@ -262,6 +264,7 @@ def parse_player_fixture_stats(players_data: list) -> list:
                 "team_name": team.get("name"),
                 "shots_on_target": shots.get("on") or 0,
                 "shots_total": shots.get("total") or 0,
+                "goals": goals.get("total") or 0,
                 "minutes_played": games.get("minutes") or 0,
             })
     return result

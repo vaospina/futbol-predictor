@@ -111,6 +111,7 @@ def backfill(from_date: date, to_date: date, season: int = None):
                             "match_date": match_date_val,
                             "shots_on_target": p["shots_on_target"],
                             "shots_total": p["shots_total"],
+                            "goals": p.get("goals", 0),
                             "minutes_played": p["minutes_played"],
                         })
                     if batch:
