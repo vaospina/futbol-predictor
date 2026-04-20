@@ -193,6 +193,8 @@ def parse_fixture(fixture_data: dict) -> dict:
     }
     raw_status = fixture.get("status", {}).get("short", "")
 
+    halftime = score.get("halftime", {})
+
     return {
         "api_fixture_id": fixture.get("id"),
         "league_id": league.get("id"),
@@ -205,6 +207,8 @@ def parse_fixture(fixture_data: dict) -> dict:
         "away_team_id": teams.get("away", {}).get("id"),
         "home_score": goals.get("home"),
         "away_score": goals.get("away"),
+        "home_ht_score": halftime.get("home"),
+        "away_ht_score": halftime.get("away"),
         "status": status_map.get(raw_status, "unknown"),
         "home_corners": None,
         "away_corners": None,

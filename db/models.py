@@ -39,14 +39,14 @@ def upsert_match(match_data: dict):
     INSERT INTO matches (
         api_fixture_id, league_id, league_name, season, match_date,
         home_team, away_team, home_team_id, away_team_id,
-        home_score, away_score, status,
+        home_score, away_score, home_ht_score, away_ht_score, status,
         home_corners, away_corners,
         home_shots_on_target, away_shots_on_target,
         home_possession, away_possession, venue
     ) VALUES (
         :api_fixture_id, :league_id, :league_name, :season, :match_date,
         :home_team, :away_team, :home_team_id, :away_team_id,
-        :home_score, :away_score, :status,
+        :home_score, :away_score, :home_ht_score, :away_ht_score, :status,
         :home_corners, :away_corners,
         :home_shots_on_target, :away_shots_on_target,
         :home_possession, :away_possession, :venue
@@ -54,6 +54,8 @@ def upsert_match(match_data: dict):
     ON CONFLICT (api_fixture_id) DO UPDATE SET
         home_score = EXCLUDED.home_score,
         away_score = EXCLUDED.away_score,
+        home_ht_score = EXCLUDED.home_ht_score,
+        away_ht_score = EXCLUDED.away_ht_score,
         status = EXCLUDED.status,
         home_corners = EXCLUDED.home_corners,
         away_corners = EXCLUDED.away_corners,
