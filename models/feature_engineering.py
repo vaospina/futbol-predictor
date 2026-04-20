@@ -76,6 +76,15 @@ def build_match_features(match: dict, sentiment_home: dict = None, sentiment_awa
     features["home_form_streak"] = _calc_streak(home_last5, home_id)
     features["away_form_streak"] = _calc_streak(away_last5, away_id)
 
+    # === Features específicas para goles ===
+    features["home_goals_avg_last5"] = _avg_goals_total(home_last5)
+    features["away_goals_avg_last5"] = _avg_goals_total(away_last5)
+    features["home_over25_rate"] = _over_rate(home_last5, 2.5)
+    features["away_over25_rate"] = _over_rate(away_last5, 2.5)
+    features["h2h_avg_goals"] = _avg_goals_total(h2h)
+    features["home_ht_goals_avg"] = _avg_ht_goals(home_last5, home_id, is_home=True)
+    features["away_ht_goals_avg"] = _avg_ht_goals(away_last5, away_id, is_home=False)
+
     # === Posicion en la tabla ===
     features["home_league_position"] = match.get("home_league_position", 10)
     features["away_league_position"] = match.get("away_league_position", 10)
@@ -253,6 +262,34 @@ def _calc_streak(matches: list, team_id: int) -> int:
     return 0
 
 
+def _avg_goals_total(matches: list) -> float:
+    if not matches:
+        return 0.0
+    totals = [
+        safe_int(m.get("home_score")) + safe_int(m.get("away_score"))
+        for m in matches if m.get("home_score") is not None
+    ]
+    return np.mean(totals) if totals else 0.0
+
+
+def _over_rate(matches: list, line: float) -> float:
+    if not matches:
+        return 0.0
+    valid = [m for m in matches if m.get("home_score") is not None]
+    if not valid:
+        return 0.0
+    over = sum(1 for m in valid if safe_int(m.get("home_score")) + safe_int(m.get("away_score")) > line)
+    return over / len(valid)
+
+
+def _avg_ht_goals(matches: list, team_id: int, is_home: bool) -> float:
+    if not matches:
+        return 0.0
+    key = "home_ht_score" if is_home else "away_ht_score"
+    vals = [safe_float(m.get(key)) for m in matches if m.get(key) is not None]
+    return np.mean(vals) if vals else 0.0
+
+
 def _days_since_last(matches: list, ref_date) -> int:
     if not matches:
         return 7
@@ -285,6 +322,20 @@ MATCH_FEATURE_NAMES = [
     "days_since_last_match_home", "days_since_last_match_away",
     "home_sentiment_score", "away_sentiment_score",
     "home_key_player_absent", "away_key_player_absent",
+]
+
+GOALS_FEATURE_NAMES = [
+    "home_goals_scored_avg", "away_goals_scored_avg",
+    "home_goals_conceded_avg", "away_goals_conceded_avg",
+    "home_goals_avg_last5", "away_goals_avg_last5",
+    "home_over25_rate", "away_over25_rate",
+    "h2h_avg_goals",
+    "home_ht_goals_avg", "away_ht_goals_avg",
+    "home_form_points", "away_form_points",
+    "home_win_rate_last10", "away_win_rate_last10",
+    "position_difference", "is_derby",
+    "odds_home_win", "odds_draw", "odds_away_win",
+    "odds_implied_prob_home",
 ]
 
 CORNERS_FEATURE_NAMES = [

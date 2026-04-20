@@ -7,7 +7,7 @@ import joblib
 import os
 from xgboost import XGBClassifier
 from sklearn.model_selection import cross_val_score, TimeSeriesSplit
-from models.feature_engineering import MATCH_FEATURE_NAMES
+from models.feature_engineering import GOALS_FEATURE_NAMES
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -19,7 +19,7 @@ class GoalsPredictor:
     def __init__(self, market_name: str):
         self.market_name = market_name
         self.model = None
-        self.feature_names = MATCH_FEATURE_NAMES
+        self.feature_names = GOALS_FEATURE_NAMES
         self.model_path = os.path.join(MODEL_DIR, f"goals_{market_name}.joblib")
 
     def train(self, X: np.ndarray, y: np.ndarray) -> dict:

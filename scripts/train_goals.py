@@ -1,11 +1,6 @@
 """
-Entrena todos los modelos de goles y evalúa vs baseline.
-
-Mercados:
-  - over_1.5, over_2.5, over_3.5 (goles totales)
-  - btts (ambos equipos marcan)
-  - ht_over_0.5, ht_over_1.5 (goles primer tiempo)
-  - 2h_over_0.5, 2h_over_1.5 (goles segundo tiempo)
+Entrena modelos de goles: XGBoost clasificador vs Poisson regresión.
+Evalúa ambos contra baseline y activa solo los que superen.
 
 Uso:
     python -m scripts.train_goals
@@ -18,8 +13,9 @@ from collections import defaultdict
 from db.models import fetch_all
 from db import models as db_models
 from models import feature_engineering as fe
-from models.feature_engineering import build_match_features, MATCH_FEATURE_NAMES
+from models.feature_engineering import build_match_features, GOALS_FEATURE_NAMES
 from models.goals_predictor import GoalsPredictor
+from models.goals_poisson import GoalsPoissonPredictor
 from db.models import insert_model_version, deactivate_models, set_config
 from utils.logger import get_logger
 
@@ -111,9 +107,13 @@ def install_patches(home_idx, away_idx, all_idx):
     fe.get_match_odds_summary = get_match_odds_summary
 
 
-def prepare_data(matches, label_fn, filter_fn=None):
+def prepare_goals_data(matches, filter_fn=None):
+    """Build feature matrix + goal targets for all matches."""
     X_list = []
-    y_list = []
+    y_home_list = []
+    y_away_list = []
+    meta = []  # keep match data for label functions
+
     for m in matches:
         if m.get("home_score") is None:
             continue
@@ -121,58 +121,135 @@ def prepare_data(matches, label_fn, filter_fn=None):
             continue
         try:
             features = build_match_features(m)
-            vec = [features.get(f, 0) for f in MATCH_FEATURE_NAMES]
-            label = label_fn(m)
-            if label is None:
-                continue
+            vec = [features.get(f, 0) for f in GOALS_FEATURE_NAMES]
             X_list.append(vec)
-            y_list.append(label)
+            y_home_list.append(m["home_score"])
+            y_away_list.append(m["away_score"])
+            meta.append(m)
         except Exception:
             continue
-    return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.int32)
 
+    return (
+        np.array(X_list, dtype=np.float32),
+        np.array(y_home_list, dtype=np.float32),
+        np.array(y_away_list, dtype=np.float32),
+        meta,
+    )
 
-# Label functions
-def label_over(line):
-    def fn(m):
-        total = m["home_score"] + m["away_score"]
-        return 1 if total > line else 0
-    return fn
-
-def label_btts(m):
-    return 1 if m["home_score"] > 0 and m["away_score"] > 0 else 0
-
-def label_ht_over(line):
-    def fn(m):
-        ht = (m.get("home_ht_score") or 0) + (m.get("away_ht_score") or 0)
-        return 1 if ht > line else 0
-    return fn
-
-def label_2h_over(line):
-    def fn(m):
-        ht_h = m.get("home_ht_score")
-        ht_a = m.get("away_ht_score")
-        if ht_h is None or ht_a is None:
-            return None
-        goals_2h = (m["home_score"] - ht_h) + (m["away_score"] - ht_a)
-        return 1 if goals_2h > line else 0
-    return fn
 
 def has_ht_scores(m):
     return m.get("home_ht_score") is not None and m.get("away_ht_score") is not None
 
 
-MARKETS = [
-    # (name, label_fn, filter_fn, description)
-    ("over_1.5", label_over(1.5), None, "Over 1.5 goles"),
-    ("over_2.5", label_over(2.5), None, "Over 2.5 goles"),
-    ("over_3.5", label_over(3.5), None, "Over 3.5 goles"),
-    ("btts", label_btts, None, "Ambos marcan"),
-    ("ht_over_0.5", label_ht_over(0.5), has_ht_scores, "Over 0.5 goles 1T"),
-    ("ht_over_1.5", label_ht_over(1.5), has_ht_scores, "Over 1.5 goles 1T"),
-    ("2h_over_0.5", label_2h_over(0.5), has_ht_scores, "Over 0.5 goles 2T"),
-    ("2h_over_1.5", label_2h_over(1.5), has_ht_scores, "Over 1.5 goles 2T"),
-]
+# Market definitions: (name, label_fn on match, description)
+def get_label(match, market):
+    hs, aws = match["home_score"], match["away_score"]
+    total = hs + aws
+
+    if market == "over_1.5":
+        return 1 if total > 1.5 else 0
+    elif market == "over_2.5":
+        return 1 if total > 2.5 else 0
+    elif market == "over_3.5":
+        return 1 if total > 3.5 else 0
+    elif market == "btts":
+        return 1 if hs > 0 and aws > 0 else 0
+    elif market == "ht_over_0.5":
+        ht = (match.get("home_ht_score") or 0) + (match.get("away_ht_score") or 0)
+        return 1 if ht > 0.5 else 0
+    elif market == "ht_over_1.5":
+        ht = (match.get("home_ht_score") or 0) + (match.get("away_ht_score") or 0)
+        return 1 if ht > 1.5 else 0
+    elif market == "2h_over_0.5":
+        hth = match.get("home_ht_score")
+        hta = match.get("away_ht_score")
+        if hth is None:
+            return None
+        g2h = (hs - hth) + (aws - hta)
+        return 1 if g2h > 0.5 else 0
+    elif market == "2h_over_1.5":
+        hth = match.get("home_ht_score")
+        hta = match.get("away_ht_score")
+        if hth is None:
+            return None
+        g2h = (hs - hth) + (aws - hta)
+        return 1 if g2h > 1.5 else 0
+    return None
+
+
+MARKETS_FULLTIME = ["over_1.5", "over_2.5", "over_3.5", "btts"]
+MARKETS_HALFTIME = ["ht_over_0.5", "ht_over_1.5", "2h_over_0.5", "2h_over_1.5"]
+ALL_MARKETS = MARKETS_FULLTIME + MARKETS_HALFTIME
+
+
+def evaluate_xgb(X, meta, market):
+    """Train XGBoost classifier for a market, return metrics."""
+    y = np.array([get_label(m, market) for m in meta], dtype=np.int32)
+    valid = y >= 0  # filter None labels
+    X_valid = X[valid]
+    y_valid = y[valid]
+
+    if len(X_valid) < 100:
+        return None
+
+    baseline = float(np.mean(y_valid))
+    baseline_acc = max(baseline, 1 - baseline)
+
+    predictor = GoalsPredictor(market)
+    predictor.feature_names = GOALS_FEATURE_NAMES
+    metrics = predictor.train(X_valid, y_valid)
+    metrics["baseline_pct"] = round(baseline * 100, 1)
+    metrics["baseline_acc"] = round(baseline_acc * 100, 1)
+    metrics["beats_baseline"] = metrics["accuracy_cv"] > baseline_acc
+    metrics["predictor"] = predictor
+    return metrics
+
+
+def evaluate_poisson(poisson_model, X, meta, market):
+    """Evaluate Poisson model on a market via time-series simulation."""
+    from sklearn.model_selection import TimeSeriesSplit
+
+    y = np.array([get_label(m, market) for m in meta], dtype=np.int32)
+    valid = y >= 0
+    X_valid = X[valid]
+    y_valid = y[valid]
+
+    if len(X_valid) < 100:
+        return None
+
+    baseline = float(np.mean(y_valid))
+    baseline_acc = max(baseline, 1 - baseline)
+
+    # Evaluate by predicting on the full set (model already trained)
+    preds = poisson_model.predict_market(X_valid, market)
+    y_pred = np.array([1 if p["prob_yes"] >= 0.5 else 0 for p in preds])
+    accuracy = float(np.mean(y_pred == y_valid))
+
+    # Also do proper CV
+    tscv = TimeSeriesSplit(n_splits=5)
+    cv_accs = []
+    y_home_all = np.array([m["home_score"] for m in meta], dtype=np.float32)[valid]
+    y_away_all = np.array([m["away_score"] for m in meta], dtype=np.float32)[valid]
+
+    for train_idx, test_idx in tscv.split(X_valid):
+        X_tr, X_te = X_valid[train_idx], X_valid[test_idx]
+        yh_tr, ya_tr = y_home_all[train_idx], y_away_all[train_idx]
+        y_te = y_valid[test_idx]
+
+        fold_model = GoalsPoissonPredictor()
+        fold_model.train(X_tr, yh_tr, ya_tr)
+        fold_preds = fold_model.predict_market(X_te, market)
+        fold_y_pred = np.array([1 if p["prob_yes"] >= 0.5 else 0 for p in fold_preds])
+        cv_accs.append(float(np.mean(fold_y_pred == y_te)))
+
+    return {
+        "accuracy_cv": float(np.mean(cv_accs)),
+        "accuracy_full": accuracy,
+        "baseline_pct": round(baseline * 100, 1),
+        "baseline_acc": round(baseline_acc * 100, 1),
+        "beats_baseline": float(np.mean(cv_accs)) > baseline_acc,
+        "training_samples": len(X_valid),
+    }
 
 
 def main():
@@ -180,50 +257,103 @@ def main():
     install_patches(home_idx, away_idx, all_idx)
 
     version = datetime.now().strftime("v%Y%m%d_%H%M")
-    results = {}
 
-    for market_name, label_fn, filter_fn, desc in MARKETS:
-        logger.info(f"=== {desc} ({market_name}) ===")
+    # Prepare data — fulltime (all matches) and halftime (only those with HT)
+    logger.info("Preparando datos fulltime...")
+    X_ft, yh_ft, ya_ft, meta_ft = prepare_goals_data(matches)
+    logger.info(f"  {len(X_ft)} muestras fulltime")
 
-        X, y = prepare_data(matches, label_fn, filter_fn)
-        if len(X) < 100:
-            logger.warning(f"  Datos insuficientes: {len(X)}")
-            results[market_name] = {"error": "insufficient_data", "samples": len(X)}
-            continue
+    logger.info("Preparando datos halftime...")
+    X_ht, yh_ht, ya_ht, meta_ht = prepare_goals_data(matches, filter_fn=has_ht_scores)
+    logger.info(f"  {len(X_ht)} muestras halftime")
 
-        baseline = float(np.mean(y))
-        baseline_acc = max(baseline, 1 - baseline)
+    # Train Poisson models
+    logger.info("=== Entrenando modelo Poisson (fulltime) ===")
+    poisson_ft = GoalsPoissonPredictor()
+    poisson_metrics_ft = poisson_ft.train(X_ft, yh_ft, ya_ft)
 
-        predictor = GoalsPredictor(market_name)
-        metrics = predictor.train(X, y)
-        metrics["baseline_pct"] = round(baseline * 100, 1)
-        metrics["baseline_acc"] = round(baseline_acc * 100, 1)
-        metrics["beats_baseline"] = metrics["accuracy_cv"] > baseline_acc
+    logger.info("=== Entrenando modelo Poisson (halftime) ===")
+    poisson_ht = GoalsPoissonPredictor()
+    poisson_metrics_ht = poisson_ht.train(X_ht, yh_ht, ya_ht)
 
-        if metrics["beats_baseline"]:
-            predictor.save()
-            deactivate_models(f"goals_{market_name}")
-            insert_model_version({
-                "version": f"{version}_{market_name}",
-                "model_type": f"goals_{market_name}",
-                "training_samples": metrics["training_samples"],
-                "accuracy_cv": metrics["accuracy_cv"],
-                "f1_score": metrics["f1_score"],
-                "log_loss": metrics["log_loss"],
-                "is_active": True,
-                "model_binary": None,
-                "feature_importance": json.dumps(predictor.get_feature_importance()),
-                "notes": f"{desc}: acc={metrics['accuracy_cv']:.3f} vs baseline={metrics['baseline_acc']:.1f}%",
-            })
-            logger.info(f"  ACTIVADO: {metrics['accuracy_cv']:.1%} > baseline {metrics['baseline_acc']:.1f}%")
+    # Compare all markets
+    comparison = {}
+    activated = []
+
+    for market in ALL_MARKETS:
+        is_ht = market in MARKETS_HALFTIME
+        X = X_ht if is_ht else X_ft
+        meta = meta_ht if is_ht else meta_ft
+        poisson_model = poisson_ht if is_ht else poisson_ft
+
+        logger.info(f"=== {market} ===")
+
+        xgb_result = evaluate_xgb(X, meta, market)
+        poi_result = evaluate_poisson(poisson_model, X, meta, market)
+
+        xgb_acc = xgb_result["accuracy_cv"] if xgb_result else 0
+        poi_acc = poi_result["accuracy_cv"] if poi_result else 0
+        baseline_acc = xgb_result["baseline_acc"] if xgb_result else 0
+
+        best_method = "poisson" if poi_acc > xgb_acc else "xgboost"
+        best_acc = max(xgb_acc, poi_acc)
+        beats = best_acc > baseline_acc / 100
+
+        comparison[market] = {
+            "xgb_acc": round(xgb_acc * 100, 1),
+            "poisson_acc": round(poi_acc * 100, 1),
+            "baseline_acc": baseline_acc,
+            "best_method": best_method,
+            "best_acc": round(best_acc * 100, 1),
+            "beats_baseline": beats,
+            "samples": xgb_result["training_samples"] if xgb_result else 0,
+        }
+
+        if beats:
+            logger.info(
+                f"  ACTIVADO ({best_method}): {best_acc:.1%} > baseline {baseline_acc}%"
+            )
+            activated.append(market)
+
+            if best_method == "poisson":
+                poisson_model.save()
+                deactivate_models(f"goals_{market}")
+                insert_model_version({
+                    "version": f"{version}_{market}_poisson",
+                    "model_type": f"goals_{market}",
+                    "training_samples": poi_result["training_samples"],
+                    "accuracy_cv": poi_result["accuracy_cv"],
+                    "f1_score": None,
+                    "log_loss": None,
+                    "is_active": True,
+                    "model_binary": None,
+                    "feature_importance": json.dumps(poisson_model.get_feature_importance()),
+                    "notes": f"Poisson: {poi_result['accuracy_cv']:.3f} vs baseline {baseline_acc}%",
+                })
+            else:
+                predictor = xgb_result["predictor"]
+                predictor.save()
+                deactivate_models(f"goals_{market}")
+                insert_model_version({
+                    "version": f"{version}_{market}_xgb",
+                    "model_type": f"goals_{market}",
+                    "training_samples": xgb_result["training_samples"],
+                    "accuracy_cv": xgb_result["accuracy_cv"],
+                    "f1_score": xgb_result.get("f1_score"),
+                    "log_loss": xgb_result.get("log_loss"),
+                    "is_active": True,
+                    "model_binary": None,
+                    "feature_importance": json.dumps(predictor.get_feature_importance()),
+                    "notes": f"XGBoost: {xgb_result['accuracy_cv']:.3f} vs baseline {baseline_acc}%",
+                })
         else:
-            logger.info(f"  DESHABILITADO: {metrics['accuracy_cv']:.1%} <= baseline {metrics['baseline_acc']:.1f}%")
+            logger.info(
+                f"  DESHABILITADO: best={best_acc:.1%} <= baseline {baseline_acc}%"
+            )
 
-        results[market_name] = metrics
-
-    logger.info("=== RESUMEN ===")
-    print(json.dumps(results, indent=2, default=str))
-    return results
+    logger.info(f"\n=== MERCADOS ACTIVADOS: {activated if activated else 'NINGUNO'} ===")
+    print(json.dumps(comparison, indent=2))
+    return comparison, activated
 
 
 if __name__ == "__main__":
