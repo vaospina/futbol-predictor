@@ -97,6 +97,10 @@ def build_match_features(match: dict, sentiment_home: dict = None, sentiment_awa
     features["odds_draw"] = safe_float(odds.get("odds_draw"), 3.3)
     features["odds_away_win"] = safe_float(odds.get("odds_away_win"), 3.5)
     features["odds_over_corners"] = safe_float(odds.get("odds_over_corners"), 1.9)
+    features["odds_over25"] = safe_float(odds.get("odds_over25"), 1.8)
+    features["odds_under25"] = safe_float(odds.get("odds_under25"), 2.0)
+    features["odds_btts_yes"] = safe_float(odds.get("odds_btts_yes"), 1.8)
+    features["odds_btts_no"] = safe_float(odds.get("odds_btts_no"), 2.0)
     # Prob implicita normalizada
     total_prob = (1 / features["odds_home_win"] + 1 / features["odds_draw"] + 1 / features["odds_away_win"])
     features["odds_implied_prob_home"] = (1 / features["odds_home_win"]) / total_prob if total_prob > 0 else 0.33
@@ -336,6 +340,8 @@ GOALS_FEATURE_NAMES = [
     "position_difference", "is_derby",
     "odds_home_win", "odds_draw", "odds_away_win",
     "odds_implied_prob_home",
+    "odds_over25", "odds_under25",
+    "odds_btts_yes", "odds_btts_no",
 ]
 
 CORNERS_FEATURE_NAMES = [

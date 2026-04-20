@@ -7,7 +7,7 @@ from datetime import date
 from data.api_football import ApiFootballClient, parse_fixture, parse_fixture_statistics, parse_lineups
 from data.news_collector import fetch_team_news
 from data.sentiment import analyze_team_news
-from data.odds_collector import collect_odds_for_fixture
+from data.odds_collector import collect_odds_for_fixture, get_match_odds_summary
 from models.feature_engineering import (
     build_match_features, build_corners_features, build_player_features,
     MATCH_FEATURE_NAMES, CORNERS_FEATURE_NAMES, PLAYER_FEATURE_NAMES,
@@ -112,7 +112,7 @@ def run_daily_predictions():
                 logger.info(f"Procesando: {home_team} vs {away_team}")
 
                 # Recolectar odds
-                collect_odds_for_fixture(fixture_id, match_id)
+                live_odds = collect_odds_for_fixture(api, fixture_id, match_id)
 
                 # Analizar noticias
                 home_news = fetch_team_news(home_team)
@@ -133,8 +133,22 @@ def run_daily_predictions():
                     elif team.get("id") == away_id:
                         match_data["away_league_position"] = team_standing.get("rank", 10)
 
-                # Construir features
+                # Construir features (con odds reales si disponibles)
                 features = build_match_features(match_data, sentiment_home, sentiment_away)
+
+                # Sobreescribir odds con datos reales del bookmaker
+                if live_odds:
+                    for key in ("odds_home_win", "odds_draw", "odds_away_win",
+                                "odds_over25", "odds_under25", "odds_btts_yes", "odds_btts_no",
+                                "odds_over15", "odds_under15", "odds_over35", "odds_under35"):
+                        if live_odds.get(key):
+                            features[key] = live_odds[key]
+                    # Recalcular prob implícita con odds reales
+                    hw = features.get("odds_home_win", 2.0)
+                    dw = features.get("odds_draw", 3.3)
+                    aw = features.get("odds_away_win", 3.5)
+                    tp = 1/hw + 1/dw + 1/aw
+                    features["odds_implied_prob_home"] = (1/hw) / tp if tp > 0 else 0.33
 
                 # --- Prediccion 1X2 ---
                 if match_predictor.model:

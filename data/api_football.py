@@ -121,9 +121,9 @@ class ApiFootballClient:
             return response[0]["league"]["standings"][0]
         return []
 
-    def get_odds(self, fixture_id: int, bookmaker: int = 6):
-        params = {"fixture": fixture_id, "bookmaker": bookmaker}
-        data = self._get("odds", params)
+    def get_fixture_odds(self, fixture_id: int):
+        """Get odds for a fixture. Tries Bet365 first, falls back to any available."""
+        data = self._get("odds", {"fixture": fixture_id})
         return data.get("response", [])
 
     def get_player_stats(self, player_id: int, season: int = None, league_id: int = None):
@@ -245,6 +245,65 @@ def parse_fixture_statistics(stats_data: list, match_data: dict) -> dict:
                 pass
 
     return match_data
+
+
+def parse_odds(odds_data: list, preferred_bookmaker: str = "Bet365") -> dict:
+    """Parse odds response into a flat dict of odds values.
+
+    Tries preferred bookmaker first, falls back to first available.
+    Returns dict with keys: odds_home_win, odds_draw, odds_away_win,
+    odds_over15, odds_under15, odds_over25, odds_under25,
+    odds_over35, odds_under35, odds_btts_yes, odds_btts_no.
+    """
+    if not odds_data:
+        return {}
+
+    bookmakers = odds_data[0].get("bookmakers", []) if odds_data else []
+    if not bookmakers:
+        return {}
+
+    # Find preferred bookmaker, fallback to first
+    bk = None
+    for b in bookmakers:
+        if b.get("name") == preferred_bookmaker:
+            bk = b
+            break
+    if bk is None:
+        bk = bookmakers[0]
+
+    bets_by_name = {}
+    for bet in bk.get("bets", []):
+        bets_by_name[bet.get("name")] = {
+            v.get("value"): float(v.get("odd", 0))
+            for v in bet.get("values", [])
+        }
+
+    result = {"bookmaker": bk.get("name", "")}
+
+    # 1X2
+    mw = bets_by_name.get("Match Winner", {})
+    if mw:
+        result["odds_home_win"] = mw.get("Home", 0)
+        result["odds_draw"] = mw.get("Draw", 0)
+        result["odds_away_win"] = mw.get("Away", 0)
+
+    # Over/Under goals
+    ou = bets_by_name.get("Goals Over/Under", {})
+    if ou:
+        result["odds_over15"] = ou.get("Over 1.5", 0)
+        result["odds_under15"] = ou.get("Under 1.5", 0)
+        result["odds_over25"] = ou.get("Over 2.5", 0)
+        result["odds_under25"] = ou.get("Under 2.5", 0)
+        result["odds_over35"] = ou.get("Over 3.5", 0)
+        result["odds_under35"] = ou.get("Under 3.5", 0)
+
+    # BTTS
+    btts = bets_by_name.get("Both Teams Score", {})
+    if btts:
+        result["odds_btts_yes"] = btts.get("Yes", 0)
+        result["odds_btts_no"] = btts.get("No", 0)
+
+    return result
 
 
 def parse_player_fixture_stats(players_data: list) -> list:
