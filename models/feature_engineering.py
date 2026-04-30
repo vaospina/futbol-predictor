@@ -16,7 +16,7 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-_CUP_LEAGUES = {2, 3, 13}   # UCL, UEL, Copa Libertadores
+_CUP_LEAGUES = {2, 3, 11, 13}   # UCL, UEL, Copa Sudamericana, Copa Libertadores
 _UCL_UEL_KO_MONTHS = {2, 3, 4, 5}   # Feb-May: R16, QF, SF, Final
 
 

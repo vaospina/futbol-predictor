@@ -16,6 +16,7 @@ CUP_LEAGUES = {
     2:  {"name": "UEFA Champions League", "country": "Europa"},
     3:  {"name": "UEFA Europa League",    "country": "Europa"},
     13: {"name": "Copa Libertadores",     "country": "Sudamerica"},
+    11: {"name": "Copa Sudamericana",     "country": "Sudamerica"},
 }
 
 # Todas las ligas combinadas
