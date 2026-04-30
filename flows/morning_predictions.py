@@ -73,7 +73,8 @@ def run_daily_predictions():
         # 2. Obtener partidos del dia
         all_fixtures = []
         for league_id, league_info in ALL_LEAGUES.items():
-            fixtures = api.get_fixtures_by_date(league_id, today)
+            season = league_info.get("season", CURRENT_SEASON)
+            fixtures = api.get_fixtures_by_date(league_id, today, season=season)
             for f in fixtures:
                 f["_league_info"] = league_info
             all_fixtures.extend(fixtures)

@@ -100,16 +100,43 @@ class ApiFootballClient:
             "requests": response.get("requests", {}),
         }
 
-    def get_fixtures_by_date(self, league_id: int, match_date: date, season: int = None):
+    def get_fixtures_by_date(self, league_id: int, colombia_date: date, season: int = None):
+        """Return fixtures whose kickoff falls on `colombia_date` in America/Bogota (UTC-5).
+
+        API-Football stores all times in UTC.  Evening LATAM matches (e.g. 7–11 PM
+        Colombia) have UTC dates of colombia_date+1, so we widen the query to
+        from=colombia_date to=colombia_date+1 and then filter by Colombia date.
+        """
+        import pytz
+        from datetime import timedelta
+
         season = season or CURRENT_SEASON
+        tz_col = pytz.timezone("America/Bogota")
+        next_utc = colombia_date + timedelta(days=1)
+
         params = {
             "league": league_id,
             "season": season,
-            "from": match_date.isoformat(),
-            "to": match_date.isoformat(),
+            "from": colombia_date.isoformat(),
+            "to": next_utc.isoformat(),
         }
         data = self._get("fixtures", params)
-        return data.get("response", [])
+        all_fixtures = data.get("response", [])
+
+        result = []
+        for f in all_fixtures:
+            utc_str = f.get("fixture", {}).get("date", "")
+            if not utc_str:
+                result.append(f)
+                continue
+            try:
+                utc_dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+                if utc_dt.astimezone(tz_col).date() == colombia_date:
+                    result.append(f)
+            except Exception:
+                result.append(f)
+
+        return result
 
     def get_fixtures_by_date_range(self, league_id: int, from_date: date, to_date: date, season: int = None):
         season = season or CURRENT_SEASON

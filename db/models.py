@@ -5,6 +5,7 @@ from datetime import date, datetime
 from sqlalchemy import text
 from db.connection import engine
 from utils.logger import get_logger
+from utils.helpers import today_colombia
 
 logger = get_logger(__name__)
 
@@ -84,43 +85,49 @@ def get_matches_by_date(match_date: date):
 
 
 def get_team_last_matches(team_id: int, n: int = 10, before_date: date = None):
-    before = before_date or date.today()
+    # Use Colombia date cutoff: subtract 5h offset so midnight UTC matches
+    # (= 7PM Colombia previous day) are correctly included in history.
+    before = before_date or today_colombia()
     return fetch_all(
         """SELECT * FROM matches
         WHERE (home_team_id = :tid OR away_team_id = :tid)
-          AND status = 'finished' AND DATE(match_date) < :bd
+          AND status = 'finished'
+          AND (match_date - INTERVAL '5 hours')::date < :bd
         ORDER BY match_date DESC LIMIT :n""",
         {"tid": team_id, "bd": before, "n": n}
     )
 
 
 def get_team_home_matches(team_id: int, n: int = 10, before_date: date = None):
-    before = before_date or date.today()
+    before = before_date or today_colombia()
     return fetch_all(
         """SELECT * FROM matches
-        WHERE home_team_id = :tid AND status = 'finished' AND DATE(match_date) < :bd
+        WHERE home_team_id = :tid AND status = 'finished'
+          AND (match_date - INTERVAL '5 hours')::date < :bd
         ORDER BY match_date DESC LIMIT :n""",
         {"tid": team_id, "bd": before, "n": n}
     )
 
 
 def get_team_away_matches(team_id: int, n: int = 10, before_date: date = None):
-    before = before_date or date.today()
+    before = before_date or today_colombia()
     return fetch_all(
         """SELECT * FROM matches
-        WHERE away_team_id = :tid AND status = 'finished' AND DATE(match_date) < :bd
+        WHERE away_team_id = :tid AND status = 'finished'
+          AND (match_date - INTERVAL '5 hours')::date < :bd
         ORDER BY match_date DESC LIMIT :n""",
         {"tid": team_id, "bd": before, "n": n}
     )
 
 
 def get_h2h_matches(team1_id: int, team2_id: int, n: int = 5, before_date: date = None):
-    before = before_date or date.today()
+    before = before_date or today_colombia()
     return fetch_all(
         """SELECT * FROM matches
         WHERE ((home_team_id = :t1 AND away_team_id = :t2)
             OR (home_team_id = :t2 AND away_team_id = :t1))
-          AND status = 'finished' AND DATE(match_date) < :bd
+          AND status = 'finished'
+          AND (match_date - INTERVAL '5 hours')::date < :bd
         ORDER BY match_date DESC LIMIT :n""",
         {"t1": team1_id, "t2": team2_id, "n": n, "bd": before}
     )
@@ -172,7 +179,7 @@ def get_pending_predictions(pred_date: date):
 
 def get_recent_pending_predictions(lookback_days: int = 2):
     from datetime import timedelta
-    from_date = date.today() - timedelta(days=lookback_days)
+    from_date = today_colombia() - timedelta(days=lookback_days)
     return fetch_all(
         """SELECT p.*, m.home_team, m.away_team, m.api_fixture_id,
                   m.home_score, m.away_score, m.home_corners, m.away_corners,
@@ -354,7 +361,7 @@ def batch_upsert_player_stats(stats: list):
 
 
 def get_player_recent_stats(player_id: int, n: int = 10, before_date: date = None):
-    before = before_date or date.today()
+    before = before_date or today_colombia()
     return fetch_all(
         """SELECT * FROM player_stats
         WHERE player_id = :pid AND match_date < :bd

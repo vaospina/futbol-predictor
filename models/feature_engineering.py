@@ -2,8 +2,9 @@
 Construccion de features para los modelos ML.
 Todas las features definidas en la seccion 5.1 del documento.
 """
+import pytz
 import numpy as np
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from db.models import (
     get_team_home_matches, get_team_away_matches, get_team_last_matches,
     get_h2h_matches, get_player_recent_stats,
@@ -27,8 +28,14 @@ def build_match_features(match: dict, sentiment_home: dict = None, sentiment_awa
     match_date = match.get("match_date")
     league_id = match.get("league_id")
 
+    _tz_col = pytz.timezone("America/Bogota")
     if isinstance(match_date, str):
-        match_date = date.fromisoformat(match_date[:10])
+        try:
+            # Parse the full UTC ISO timestamp and convert to Colombia date
+            utc_dt = datetime.fromisoformat(match_date.replace("Z", "+00:00"))
+            match_date = utc_dt.astimezone(_tz_col).date()
+        except Exception:
+            match_date = date.fromisoformat(match_date[:10])
     elif hasattr(match_date, "date"):
         match_date = match_date.date()
 

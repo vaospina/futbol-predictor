@@ -1,22 +1,25 @@
 # Ligas domesticas (predicciones diarias)
+# season: API-Football season number. European leagues use academic year (2025 = 2025-26).
+# LATAM calendar-year leagues use the actual year (2026).
+# Liga MX quirk: Clausura 2026 (Jan-Jun) is season 2025 on the API (Apertura start year).
 DOMESTIC_LEAGUES = {
-    39:  {"name": "Premier League",       "country": "Inglaterra"},
-    135: {"name": "Serie A",              "country": "Italia"},
-    78:  {"name": "Bundesliga",           "country": "Alemania"},
-    140: {"name": "La Liga",              "country": "España"},
-    61:  {"name": "Ligue 1",              "country": "Francia"},
-    88:  {"name": "Eredivisie",           "country": "Holanda"},
-    71:  {"name": "Brasileirao Serie A",  "country": "Brasil"},
-    262: {"name": "Liga MX",              "country": "Mexico"},
-    128: {"name": "Argentine Primera",    "country": "Argentina"},
+    39:  {"name": "Premier League",       "country": "Inglaterra", "season": 2025},
+    135: {"name": "Serie A",              "country": "Italia",     "season": 2025},
+    78:  {"name": "Bundesliga",           "country": "Alemania",   "season": 2025},
+    140: {"name": "La Liga",              "country": "España",     "season": 2025},
+    61:  {"name": "Ligue 1",              "country": "Francia",    "season": 2025},
+    88:  {"name": "Eredivisie",           "country": "Holanda",    "season": 2025},
+    71:  {"name": "Brasileirao Serie A",  "country": "Brasil",     "season": 2026},
+    262: {"name": "Liga MX",              "country": "Mexico",     "season": 2025},
+    128: {"name": "Argentine Primera",    "country": "Argentina",  "season": 2026},
 }
 
 # Copas (predicciones cuando haya partidos)
 CUP_LEAGUES = {
-    2:  {"name": "UEFA Champions League", "country": "Europa"},
-    3:  {"name": "UEFA Europa League",    "country": "Europa"},
-    13: {"name": "Copa Libertadores",     "country": "Sudamerica"},
-    11: {"name": "Copa Sudamericana",     "country": "Sudamerica"},
+    2:  {"name": "UEFA Champions League", "country": "Europa",     "season": 2025},
+    3:  {"name": "UEFA Europa League",    "country": "Europa",     "season": 2025},
+    13: {"name": "Copa Libertadores",     "country": "Sudamerica", "season": 2026},
+    11: {"name": "Copa Sudamericana",     "country": "Sudamerica", "season": 2026},
 }
 
 # Todas las ligas combinadas

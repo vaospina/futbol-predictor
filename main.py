@@ -11,19 +11,18 @@ import os
 import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from datetime import datetime
-
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from flows.morning_predictions import run_daily_predictions
 from flows.evening_results import run_evaluation_check
 from db.migrations import run_migrations
 from notifications.telegram import send_telegram
+from utils.helpers import now_colombia
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_started_at = datetime.utcnow().isoformat()
+_started_at = now_colombia().isoformat()
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -48,7 +47,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         status = {
             "status": "ok" if db_ok and _FAILURE_COUNT < 3 else "degraded",
             "started_at": _started_at,
-            "checked_at": datetime.utcnow().isoformat(),
+            "checked_at": now_colombia().isoformat(),
             "database": "ok" if db_ok else "error",
             "api_football_consecutive_failures": _FAILURE_COUNT,
         }
