@@ -6,6 +6,7 @@ import numpy as np
 import joblib
 import os
 from xgboost import XGBClassifier
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import cross_val_score, TimeSeriesSplit
 from sklearn.preprocessing import LabelEncoder
 from models.feature_engineering import MATCH_FEATURE_NAMES
@@ -30,18 +31,22 @@ class MatchPredictor:
     def train(self, X: np.ndarray, y: np.ndarray) -> dict:
         """
         Entrena el modelo 1X2.
-        X: matriz de features
+        X: matriz de features ordenada cronológicamente (asc).
         y: array de labels ('home_win', 'draw', 'away_win')
         Retorna metricas de cross-validation.
         """
         y_encoded = self.label_encoder.transform(y)
 
-        self.model = XGBClassifier(
+        base_model = XGBClassifier(
             n_estimators=200,
-            max_depth=6,
-            learning_rate=0.1,
+            max_depth=4,          # reducido de 6 → menos overfit
+            learning_rate=0.05,   # reducido → mejor generalización
             subsample=0.8,
-            colsample_bytree=0.8,
+            colsample_bytree=0.7,
+            reg_lambda=2.0,       # L2 regularización
+            reg_alpha=0.5,        # L1 regularización
+            min_child_weight=5,   # evita splits sobre muy pocos samples
+            gamma=0.1,            # mínima reducción de loss para un split
             objective="multi:softprob",
             num_class=3,
             eval_metric="mlogloss",
@@ -49,14 +54,20 @@ class MatchPredictor:
             random_state=42,
         )
 
-        # Time-series CV: X debe estar ordenado cronológicamente (asc).
+        # Métricas con TimeSeriesSplit (sin calibración para CV puro)
         tscv = TimeSeriesSplit(n_splits=5)
-        cv_accuracy = cross_val_score(self.model, X, y_encoded, cv=tscv, scoring="accuracy")
-        cv_f1 = cross_val_score(self.model, X, y_encoded, cv=tscv, scoring="f1_macro")
-        cv_logloss = cross_val_score(self.model, X, y_encoded, cv=tscv, scoring="neg_log_loss")
+        cv_accuracy = cross_val_score(base_model, X, y_encoded, cv=tscv, scoring="accuracy")
+        cv_f1 = cross_val_score(base_model, X, y_encoded, cv=tscv, scoring="f1_macro")
+        cv_logloss = cross_val_score(base_model, X, y_encoded, cv=tscv, scoring="neg_log_loss")
 
-        # Entrenar con todos los datos
-        self.model.fit(X, y_encoded)
+        # Entrenar modelo base en 85% → calibrar Platt scaling en el 15% más reciente
+        # Esto corrige la sobreconfianza de XGBoost en probabilidades multiclase
+        cal_split = max(int(len(X) * 0.85), len(X) - 200)
+        self._base_model = base_model
+        self._base_model.fit(X[:cal_split], y_encoded[:cal_split])
+
+        self.model = CalibratedClassifierCV(self._base_model, cv="prefit", method="sigmoid")
+        self.model.fit(X[cal_split:], y_encoded[cal_split:])
 
         metrics = {
             "accuracy_cv": float(np.mean(cv_accuracy)),
@@ -66,7 +77,7 @@ class MatchPredictor:
         }
 
         logger.info(
-            f"Modelo 1X2 entrenado: accuracy={metrics['accuracy_cv']:.3f}, "
+            f"Modelo 1X2 entrenado (calibrado): accuracy={metrics['accuracy_cv']:.3f}, "
             f"f1={metrics['f1_score']:.3f}, logloss={metrics['log_loss']:.3f}"
         )
         return metrics
@@ -101,6 +112,9 @@ class MatchPredictor:
         path = path or MODEL_PATH
         joblib.dump(self.model, path)
         joblib.dump(self.label_encoder, ENCODER_PATH)
+        base_path = path.replace(".joblib", "_base.joblib")
+        if hasattr(self, "_base_model") and self._base_model is not None:
+            joblib.dump(self._base_model, base_path)
         logger.info(f"Modelo 1X2 guardado en {path}")
 
     def load(self, path: str = None):
@@ -109,13 +123,21 @@ class MatchPredictor:
             self.model = joblib.load(path)
             if os.path.exists(ENCODER_PATH):
                 self.label_encoder = joblib.load(ENCODER_PATH)
+            base_path = path.replace(".joblib", "_base.joblib")
+            if os.path.exists(base_path):
+                self._base_model = joblib.load(base_path)
             logger.info("Modelo 1X2 cargado")
             return True
         logger.warning(f"No se encontro modelo 1X2 en {path}")
         return False
 
     def get_feature_importance(self) -> dict:
-        if self.model is None:
+        # CalibratedClassifierCV no expone feature_importances_ directamente;
+        # usar el base_model entrenado antes de calibrar.
+        source = getattr(self, "_base_model", None) or self.model
+        if source is None:
             return {}
-        importance = self.model.feature_importances_
+        importance = getattr(source, "feature_importances_", None)
+        if importance is None:
+            return {}
         return {name: float(imp) for name, imp in zip(self.feature_names, importance)}

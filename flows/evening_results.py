@@ -45,12 +45,16 @@ def run_evaluation_check():
 
         api_status = api.check_status()
         if not api_status["ok"]:
-            logger.error("API-Football no responde, saltando evaluación")
-            send_telegram(
-                "ALERTA: API-Football caida durante evaluacion. "
-                "No se evaluaron predicciones en este ciclo.",
-                parse_mode=None,
-            )
+            if api_status.get("quota_exhausted"):
+                logger.warning("Cuota diaria de API-Football agotada, saltando evaluacion")
+                # Telegram ya fue enviado dentro de check_status()
+            else:
+                logger.error("API-Football no responde, saltando evaluacion")
+                send_telegram(
+                    "ALERTA: API-Football caida durante evaluacion. "
+                    "No se evaluaron predicciones en este ciclo.",
+                    parse_mode=None,
+                )
             return
 
         for pred in pending:

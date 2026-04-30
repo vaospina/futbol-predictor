@@ -75,7 +75,50 @@ def build_caches():
         p["_date"] = _to_date(p.get("match_date"))
         player_idx[p["player_id"]].append(p)
 
-    # odds vacío por defecto (no hicimos backfill de odds)
+    # Cargar odds históricos desde BD (solo matches que las tengan)
+    logger.info("Cargando odds_history en memoria...")
+    odds_cache = defaultdict(dict)
+    try:
+        all_odds = fetch_all(
+            "SELECT match_id, market, selection, odds_value FROM odds_history"
+        )
+        for o in all_odds:
+            mid = o["match_id"]
+            market = o.get("market", "")
+            selection = o.get("selection", "")
+            val = o.get("odds_value") or 0
+            if market == "Match Winner":
+                if selection == "Home":
+                    odds_cache[mid]["odds_home_win"] = val
+                elif selection == "Draw":
+                    odds_cache[mid]["odds_draw"] = val
+                elif selection == "Away":
+                    odds_cache[mid]["odds_away_win"] = val
+            elif market == "Goals Over/Under":
+                if selection == "Over 2.5":
+                    odds_cache[mid]["odds_over25"] = val
+                elif selection == "Under 2.5":
+                    odds_cache[mid]["odds_under25"] = val
+                elif selection == "Over 1.5":
+                    odds_cache[mid]["odds_over15"] = val
+                elif selection == "Under 1.5":
+                    odds_cache[mid]["odds_under15"] = val
+                elif selection == "Over 3.5":
+                    odds_cache[mid]["odds_over35"] = val
+                elif selection == "Under 3.5":
+                    odds_cache[mid]["odds_under35"] = val
+            elif market == "Both Teams Score":
+                if selection == "Yes":
+                    odds_cache[mid]["odds_btts_yes"] = val
+                elif selection == "No":
+                    odds_cache[mid]["odds_btts_no"] = val
+            elif "corner" in market.lower() and "over" in selection.lower():
+                odds_cache[mid]["odds_over_corners"] = val
+        matches_with_odds = sum(1 for v in odds_cache.values() if v)
+        logger.info(f"  {len(all_odds)} odds rows -> {matches_with_odds} matches con odds reales")
+    except Exception as e:
+        logger.warning(f"No se pudo cargar odds_history: {e}. Usando defaults.")
+
     return {
         "matches": matches,
         "home_idx": home_idx,
@@ -83,6 +126,7 @@ def build_caches():
         "all_idx": all_idx,
         "players": players,
         "player_idx": player_idx,
+        "odds_cache": odds_cache,
     }
 
 
@@ -91,6 +135,7 @@ def install_patches(cache):
     away_idx = cache["away_idx"]
     all_idx = cache["all_idx"]
     player_idx = cache["player_idx"]
+    odds_cache = cache["odds_cache"]
 
     def get_team_home_matches(team_id, n=10, before_date=None):
         before = _to_date(before_date) or date.today()
@@ -130,7 +175,8 @@ def install_patches(cache):
         return list(reversed(filtered[-n:]))
 
     def get_match_odds_summary(match_id):
-        return {}
+        # Usa odds reales si existen en BD, vacío en caso contrario (→ defaults en feature_engineering)
+        return dict(odds_cache.get(match_id, {}))
 
     # Patch db.models
     db_models.get_team_home_matches = get_team_home_matches
@@ -149,7 +195,7 @@ def install_patches(cache):
 
     # models.trainer también importó fetch_all, feature builders, etc.
     # No necesitamos patchear nada más porque los imports referenciados por nombre.
-    logger.info("Patches instalados (cache en memoria activo)")
+    logger.info("Patches instalados (cache activo, odds reales cuando disponibles)")
 
 
 def main():

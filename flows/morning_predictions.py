@@ -43,13 +43,17 @@ def run_daily_predictions():
         # Verificar que la API responde antes de generar predicciones
         api_status = api.check_status()
         if not api_status["ok"]:
-            logger.error("API-Football no responde, abortando predicciones")
-            send_telegram(
-                "ALERTA: API-Football no responde. "
-                "No se generaron predicciones hoy. "
-                "Verificar estado del servicio.",
-                parse_mode=None,
-            )
+            if api_status.get("quota_exhausted"):
+                logger.warning("Cuota diaria de API-Football agotada, abortando predicciones")
+                # Telegram ya fue enviado dentro de check_status()
+            else:
+                logger.error("API-Football no responde, abortando predicciones")
+                send_telegram(
+                    "ALERTA: API-Football no responde. "
+                    "No se generaron predicciones hoy. "
+                    "Verificar estado del servicio.",
+                    parse_mode=None,
+                )
             return
 
         reqs = api_status.get("requests", {})

@@ -11,6 +11,7 @@ logger = get_logger(__name__)
 
 _FAILURE_COUNT = 0
 _ALERT_SENT = False
+_QUOTA_ALERT_SENT = False
 
 
 class ApiFootballClient:
@@ -63,10 +64,37 @@ class ApiFootballClient:
                 pass
 
     def check_status(self) -> dict:
+        global _QUOTA_ALERT_SENT
         data = self._get("status")
         response = data.get("response", {})
+
+        # When quota is exhausted the API returns response=[] (list, not dict)
+        if not isinstance(response, dict):
+            response = {}
+
+        # Detect quota exhaustion from the errors field
+        errors = data.get("errors", {})
+        quota_exhausted = False
+        if isinstance(errors, dict) and "requests" in errors:
+            quota_exhausted = True
+        elif not response and not data.get("_api_error", False):
+            quota_exhausted = True
+
+        if quota_exhausted and not _QUOTA_ALERT_SENT:
+            _QUOTA_ALERT_SENT = True
+            try:
+                from notifications.telegram import send_telegram
+                send_telegram(
+                    "AVISO: Cuota diaria de API-Football agotada.\n"
+                    "No se generaran predicciones hasta que se renueve el cupo (00:00 UTC).",
+                    parse_mode=None,
+                )
+            except Exception:
+                pass
+
         return {
-            "ok": not data.get("_api_error", False),
+            "ok": not data.get("_api_error", False) and not quota_exhausted,
+            "quota_exhausted": quota_exhausted,
             "account": response.get("account", {}),
             "subscription": response.get("subscription", {}),
             "requests": response.get("requests", {}),

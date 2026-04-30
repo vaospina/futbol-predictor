@@ -179,16 +179,18 @@ def _calc_win_rate(matches: list, team_id: int, is_home: bool) -> float:
     if not matches:
         return 0.0
     wins = 0
+    valid = 0
     for m in matches:
         hs = m.get("home_score")
         aws = m.get("away_score")
         if hs is None or aws is None:
             continue
+        valid += 1
         if is_home and hs > aws:
             wins += 1
         elif not is_home and aws > hs:
             wins += 1
-    return wins / len(matches)
+    return wins / valid if valid else 0.0
 
 
 def _avg_goals_scored(matches: list, team_id: int, is_home: bool) -> float:
