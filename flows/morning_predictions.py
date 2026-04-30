@@ -24,7 +24,7 @@ from db.models import (
 )
 from notifications.telegram import send_prediction_message, send_telegram
 from config.leagues import ALL_LEAGUES
-from config.settings import MAX_DAILY_PREDICTIONS, CURRENT_SEASON, ENABLE_CORNERS_MODEL
+from config.settings import CURRENT_SEASON, ENABLE_CORNERS_MODEL
 from utils.helpers import today_colombia
 from utils.logger import get_logger
 
@@ -112,6 +112,7 @@ def run_daily_predictions():
                 away_team = match_data["away_team"]
                 home_id = match_data["home_team_id"]
                 away_id = match_data["away_team_id"]
+                league_name = match_data.get("league_name", "")
 
                 logger.info(f"Procesando: {home_team} vs {away_team}")
 
@@ -178,6 +179,7 @@ def run_daily_predictions():
                             "match_id": match_id,
                             "home_team": home_team,
                             "away_team": away_team,
+                            "league_name": league_name,
                             "market_type": "1x2",
                             "prediction": prediction_label,
                             "raw_prediction": pred["prediction"],
@@ -200,6 +202,7 @@ def run_daily_predictions():
                             "match_id": match_id,
                             "home_team": home_team,
                             "away_team": away_team,
+                            "league_name": league_name,
                             "market_type": "corners",
                             "prediction": f"+{pred['line']} corners" if "over" in pred["prediction"] else f"-{pred['line']} corners",
                             "raw_prediction": pred["prediction"],
@@ -263,6 +266,7 @@ def run_daily_predictions():
                                 "match_id": match_id,
                                 "home_team": home_team,
                                 "away_team": away_team,
+                                "league_name": league_name,
                                 "market_type": "player_shots",
                                 "prediction": f"{shooter['player_name']} +1.5 disparos a puerta",
                                 "raw_prediction": pred["prediction"],
@@ -277,19 +281,19 @@ def run_daily_predictions():
                 logger.error(f"Error procesando fixture: {e}")
                 continue
 
-        # 4. Filtrar por umbral y EV positivo
+        # 4. Filtrar por umbral (>= 0.50) y EV positivo; mostrar TODAS
+        min_prob = max(threshold, 0.50)
         filtered = [
             c for c in all_candidates
-            if c["probability"] >= threshold and c["expected_value"] > 0
+            if c["probability"] >= min_prob and c["expected_value"] > 0
         ]
 
-        # 5. Ordenar por probabilidad y tomar top N
-        filtered.sort(key=lambda x: x["probability"], reverse=True)
-        selected = filtered[:MAX_DAILY_PREDICTIONS]
+        # 5. Ordenar por probabilidad descendente — sin límite de cantidad
+        selected = sorted(filtered, key=lambda x: x["probability"], reverse=True)
 
         logger.info(
             f"Candidatos: {len(all_candidates)} | "
-            f"Filtrados (umbral={threshold:.0%}, EV>0): {len(filtered)} | "
+            f"Filtrados (prob>={min_prob:.0%}, EV>0): {len(filtered)} | "
             f"Seleccionados: {len(selected)}"
         )
 

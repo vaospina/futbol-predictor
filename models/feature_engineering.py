@@ -16,22 +16,27 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+_CUP_LEAGUES = {2, 3, 13}   # UCL, UEL, Copa Libertadores
+_UCL_UEL_KO_MONTHS = {2, 3, 4, 5}   # Feb-May: R16, QF, SF, Final
+
+
 def build_match_features(match: dict, sentiment_home: dict = None, sentiment_away: dict = None) -> dict:
     """Construye el vector completo de features para un partido."""
     home_id = match.get("home_team_id")
     away_id = match.get("away_team_id")
     match_date = match.get("match_date")
+    league_id = match.get("league_id")
 
     if isinstance(match_date, str):
         match_date = date.fromisoformat(match_date[:10])
     elif hasattr(match_date, "date"):
         match_date = match_date.date()
 
-    # === Rendimiento del equipo (ultimos 10 partidos) ===
+    # === Rendimiento del equipo (ultimos 20 para filtrar por competicion) ===
     home_matches_h = get_team_home_matches(home_id, 10, match_date)
     away_matches_a = get_team_away_matches(away_id, 10, match_date)
-    home_all = get_team_last_matches(home_id, 10, match_date)
-    away_all = get_team_last_matches(away_id, 10, match_date)
+    home_all = get_team_last_matches(home_id, 20, match_date)
+    away_all = get_team_last_matches(away_id, 20, match_date)
 
     features = {}
 
@@ -63,18 +68,47 @@ def build_match_features(match: dict, sentiment_home: dict = None, sentiment_awa
     features["h2h_draws"] = sum(
         1 for m in h2h if m.get("home_score") == m.get("away_score") and m.get("home_score") is not None
     )
+    features["h2h_away_wins"] = max(0, len(h2h) - features["h2h_home_wins"] - features["h2h_draws"])
+    features["h2h_matches_count"] = len(h2h)
+    # Wins when the current home team was actually the HOME side in those H2H fixtures
+    features["h2h_home_as_home_wins"] = sum(
+        1 for m in h2h
+        if m.get("home_team_id") == home_id
+        and (m.get("home_score") or 0) > (m.get("away_score") or 0)
+    )
     features["h2h_avg_corners"] = np.mean([
         safe_int(m.get("home_corners")) + safe_int(m.get("away_corners"))
         for m in h2h if m.get("home_corners") is not None
     ]) if h2h else 0.0
 
     # === Forma reciente (ultimos 5) ===
-    home_last5 = get_team_last_matches(home_id, 5, match_date)
-    away_last5 = get_team_last_matches(away_id, 5, match_date)
+    home_last5 = home_all[:5]
+    away_last5 = away_all[:5]
     features["home_form_points"] = _calc_form_points(home_last5, home_id)
     features["away_form_points"] = _calc_form_points(away_last5, away_id)
     features["home_form_streak"] = _calc_streak(home_last5, home_id)
     features["away_form_streak"] = _calc_streak(away_last5, away_id)
+    # Explicit win/loss streak features (derived from form_streak sign)
+    features["home_win_streak"] = max(0, features["home_form_streak"])
+    features["home_loss_streak"] = max(0, -features["home_form_streak"])
+    features["away_win_streak"] = max(0, features["away_form_streak"])
+    features["away_loss_streak"] = max(0, -features["away_form_streak"])
+
+    # === Forma en la misma competicion (ultimos 5 partidos del mismo league_id) ===
+    home_same_comp = [m for m in home_all if m.get("league_id") == league_id][:5]
+    away_same_comp = [m for m in away_all if m.get("league_id") == league_id][:5]
+    features["home_form_same_comp"] = _calc_form_points(home_same_comp, home_id)
+    features["away_form_same_comp"] = _calc_form_points(away_same_comp, away_id)
+
+    # === Contexto de torneo ===
+    features["is_cup"] = 1 if league_id in _CUP_LEAGUES else 0
+    # Knockout heuristic: UCL/UEL in Feb-May; Copa Libertadores Aug+
+    is_ko = False
+    if match_date and league_id in {2, 3} and match_date.month in _UCL_UEL_KO_MONTHS:
+        is_ko = True
+    elif match_date and league_id == 13 and match_date.month >= 8:
+        is_ko = True
+    features["is_knockout"] = 1 if is_ko else 0
 
     # === Features específicas para goles ===
     features["home_goals_avg_last5"] = _avg_goals_total(home_last5)
@@ -313,19 +347,32 @@ def _days_since_last(matches: list, ref_date) -> int:
 
 # Feature names in order for models
 MATCH_FEATURE_NAMES = [
+    # Team performance (last 10)
     "home_win_rate_last10", "away_win_rate_last10",
     "home_goals_scored_avg", "away_goals_scored_avg",
     "home_goals_conceded_avg", "away_goals_conceded_avg",
     "home_corners_avg", "away_corners_avg",
     "home_shots_on_target_avg", "away_shots_on_target_avg",
-    "h2h_home_wins", "h2h_draws", "h2h_avg_corners",
+    # H2H (last 5)
+    "h2h_home_wins", "h2h_draws", "h2h_away_wins",
+    "h2h_matches_count", "h2h_home_as_home_wins",
+    "h2h_avg_corners",
+    # Recent form (last 5)
     "home_form_points", "away_form_points",
     "home_form_streak", "away_form_streak",
+    "home_win_streak", "home_loss_streak",
+    "away_win_streak", "away_loss_streak",
+    # Same-competition form
+    "home_form_same_comp", "away_form_same_comp",
+    # League position
     "home_league_position", "away_league_position", "position_difference",
+    # Odds
     "odds_home_win", "odds_draw", "odds_away_win",
     "odds_over_corners", "odds_implied_prob_home",
-    "is_derby",
+    # Context
+    "is_derby", "is_cup", "is_knockout",
     "days_since_last_match_home", "days_since_last_match_away",
+    # Sentiment
     "home_sentiment_score", "away_sentiment_score",
     "home_key_player_absent", "away_key_player_absent",
 ]

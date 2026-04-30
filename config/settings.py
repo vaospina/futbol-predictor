@@ -26,8 +26,7 @@ CURRENT_SEASON = 2025
 # y se mantiene deshabilitado hasta que rinda mejor que la media.
 ENABLE_CORNERS_MODEL = False
 
-# Predicciones
-MAX_DAILY_PREDICTIONS = 4
+# Predicciones — sin límite diario; se muestran todas con prob>=umbral y EV>0
 SIMULATED_STAKE = 10000  # COP
 
 # Umbrales iniciales

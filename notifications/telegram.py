@@ -19,7 +19,7 @@ def send_telegram(message: str, parse_mode: str = "Markdown"):
             logger.info("Mensaje Telegram enviado exitosamente")
             return True
         elif response.status_code == 400 and parse_mode:
-            logger.warning(f"Error Markdown Telegram, reintentando sin formato")
+            logger.warning("Error Markdown Telegram, reintentando sin formato")
             payload.pop("parse_mode", None)
             retry = requests.post(url, json=payload, timeout=10)
             if retry.status_code == 200:
@@ -35,29 +35,49 @@ def send_telegram(message: str, parse_mode: str = "Markdown"):
         return False
 
 
+def _split_and_send(header_lines, pred_lines, footer_lines, max_chars=4000):
+    """Send predictions in chunks if they exceed Telegram's 4096-char limit."""
+    chunks = []
+    current = list(header_lines)
+    for line in pred_lines:
+        if len("\n".join(current + [line])) > max_chars:
+            chunks.append("\n".join(current))
+            current = [line]
+        else:
+            current.append(line)
+    current.extend(footer_lines)
+    chunks.append("\n".join(current))
+    ok = True
+    for msg in chunks:
+        ok = send_telegram(msg) and ok
+    return ok
+
+
 def send_prediction_message(predictions: list, model_version: str, threshold: float,
                             cumulative_stats: dict, streak: int, worst_streak: int):
     from utils.helpers import today_colombia
     fecha = today_colombia().strftime("%d/%m/%Y")
 
-    lines = [
+    market_emoji = {"1x2": "⚽", "corners": "\U0001f532", "player_shots": "\U0001f3af"}
+
+    header = [
         f"\U0001f3df *Predicciones {fecha}*",
-        f"\U0001f4ca Modelo v{model_version} | Umbral: {int(threshold * 100)}%",
+        f"\U0001f4ca Modelo v{model_version} | Umbral: {int(threshold * 100)}% | "
+        f"Total: {len(predictions)}",
         "",
     ]
 
+    pred_lines = []
     for i, pred in enumerate(predictions, 1):
-        emoji = {
-            "1x2": "\u26bd",
-            "corners": "\U0001f532",
-            "player_shots": "\U0001f3af",
-        }.get(pred["market_type"], "\u26bd")
-
-        lines.append(
-            f"{i}. {emoji} {pred['home_team']} vs {pred['away_team']} — *{pred['prediction']}*"
+        emoji = market_emoji.get(pred["market_type"], "⚽")
+        league = pred.get("league_name", "")
+        league_str = f" _{league}_" if league else ""
+        pred_lines.append(
+            f"{i}. {emoji}{league_str} *{pred['home_team']}* vs *{pred['away_team']}*"
         )
-        lines.append(
-            f"   Prob: {int(pred['probability'] * 100)}% | "
+        pred_lines.append(
+            f"   ➡️ {pred['prediction']} | "
+            f"Prob: *{int(pred['probability'] * 100)}%* | "
             f"Cuota: {pred['odds']:.2f} | "
             f"EV: +{pred['expected_value']:.2f}"
         )
@@ -66,14 +86,14 @@ def send_prediction_message(predictions: list, model_version: str, threshold: fl
     cum_correct = cumulative_stats.get("correct", 0)
     cum_pct = (cum_correct / cum_total * 100) if cum_total > 0 else 0
 
-    lines.extend([
+    footer = [
         "",
-        f"\U0001f4c8 *Rendimiento acumulado*: {cum_correct}/{cum_total} ({cum_pct:.1f}%)",
-        f"\U0001f525 Racha actual: {abs(streak)} {'aciertos' if streak >= 0 else 'fallos'}",
-        f"\U0001f4c9 Peor racha: {worst_streak} fallos seguidos",
-    ])
+        f"\U0001f4c8 *Acumulado*: {cum_correct}/{cum_total} ({cum_pct:.1f}%)",
+        f"\U0001f525 Racha: {abs(streak)} {'aciertos' if streak >= 0 else 'fallos'} | "
+        f"Peor racha: {worst_streak} fallos",
+    ]
 
-    return send_telegram("\n".join(lines))
+    return _split_and_send(header, pred_lines, footer)
 
 
 def send_results_message(results: list, day_stats: dict, cumulative_stats: dict,
@@ -88,10 +108,10 @@ def send_results_message(results: list, day_stats: dict, cumulative_stats: dict,
 
     for i, r in enumerate(results, 1):
         if r["result"] == "win":
-            emoji = "\u2705"
-            suffix = "\u00a1ACERTO!"
+            emoji = "✅"
+            suffix = "¡ACERTO!"
         else:
-            emoji = "\u274c"
+            emoji = "❌"
             suffix = "FALLO"
 
         lines.append(
