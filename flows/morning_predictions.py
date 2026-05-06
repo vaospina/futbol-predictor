@@ -342,11 +342,17 @@ def run_daily_predictions():
                 logger.error(f"Error procesando fixture: {e}")
                 continue
 
-        # 4. Filtrar por umbral (>= 0.50) y EV positivo; mostrar TODAS
+        # 4. Filtrar candidatos
+        # 1x2: solo prob >= umbral. Las odds reales de bookmaker no siempre están
+        #       disponibles en tiempo real, así que el EV calculado con defaults
+        #       genéricos (2.0/3.3/3.5) es una ilusión matemática — no filtramos por él.
+        # shots/corners: sí requieren EV > 0 porque usan odds más realistas (1.75/1.9).
         min_prob = max(threshold, 0.50)
 
-        # Diagnostic: log ALL candidates so Render logs show why predictions are dropped
+        # Diagnóstico: muestra TODOS los candidatos antes del filtro
         logger.info(f"=== DISTRIBUCIÓN CANDIDATOS ({len(all_candidates)} total) — umbral={min_prob:.0%} ===")
+        if not all_candidates:
+            logger.warning("  Sin candidatos — verificar API, modelos y ligas activas")
         by_market = {}
         for c in all_candidates:
             by_market.setdefault(c["market_type"], []).append(c)
@@ -355,26 +361,30 @@ def run_daily_predictions():
             logger.info(f"  [{mtype}] {len(cands)} candidatos:")
             for c in cands_sorted[:5]:
                 pass_prob = c["probability"] >= min_prob
-                pass_ev = c["expected_value"] > 0
-                status = "PASA" if (pass_prob and pass_ev) else f"FILTRADO(prob={'OK' if pass_prob else 'BAJA'},ev={'OK' if pass_ev else 'NEG'})"
+                if mtype == "1x2":
+                    passes = pass_prob
+                    reason = "PASA" if passes else f"FILTRADO(prob={'OK' if pass_prob else 'BAJA'})"
+                else:
+                    pass_ev = c["expected_value"] > 0
+                    passes = pass_prob and pass_ev
+                    reason = "PASA" if passes else f"FILTRADO(prob={'OK' if pass_prob else 'BAJA'},ev={'OK' if pass_ev else 'NEG'})"
                 logger.info(
-                    f"    {status} | prob={c['probability']:.1%} ev={c['expected_value']:+.3f} | "
+                    f"    {reason} | prob={c['probability']:.1%} ev={c['expected_value']:+.3f} | "
                     f"{c['home_team']} vs {c['away_team']} | {c['prediction'][:50]}"
                 )
-        if not all_candidates:
-            logger.warning("  No se generó ningún candidato — verificar API, modelos y ligas activas")
 
         filtered = [
             c for c in all_candidates
-            if c["probability"] >= min_prob and c["expected_value"] > 0
+            if c["probability"] >= min_prob
+            and (c["market_type"] == "1x2" or c["expected_value"] > 0)
         ]
 
-        # 5. Ordenar por probabilidad descendente — sin límite de cantidad
+        # 5. Ordenar por probabilidad descendente
         selected = sorted(filtered, key=lambda x: x["probability"], reverse=True)
 
         logger.info(
             f"Candidatos: {len(all_candidates)} | "
-            f"Filtrados (prob>={min_prob:.0%}, EV>0): {len(filtered)} | "
+            f"Filtrados (1x2: prob>={min_prob:.0%} | shots/corners: +EV>0): {len(filtered)} | "
             f"Seleccionados: {len(selected)}"
         )
 

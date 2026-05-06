@@ -22,9 +22,12 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # Temporada actual
 CURRENT_SEASON = 2025
 
-# Corners: R² negativo en regresión exacta, pero 66.7% en over/under = EV positivo.
-# R² mide precisión de conteo exacto (irrelevante); lo que importa es over/under accuracy.
-ENABLE_CORNERS_MODEL = True
+# Corners desactivado: R² = -7.91% en el modelo activo (v20260430_0623_corners),
+# lo que significa que predice peor que la media. El 66.7% de accuracy over/under
+# observado venía de una muestra demasiado pequeña para ser significativa.
+# TODO: reentrenar corners con métrica de clasificación over/under (accuracy/F1)
+#       en lugar de regresión MSE/R², y reactivar cuando acc_cv > 55%.
+ENABLE_CORNERS_MODEL = False
 
 # Predicciones — sin límite diario; se muestran todas con prob>=umbral y EV>0
 SIMULATED_STAKE = 10000  # COP
