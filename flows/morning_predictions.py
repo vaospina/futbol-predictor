@@ -1,9 +1,15 @@
 """
 Flujo de la manana (6:00 AM hora Colombia / 11:00 UTC).
 Genera predicciones para los partidos del dia.
+
+Shots en 2 fases:
+  Fase 1 (6 AM): predice shots usando historial de titularidades (~60% ultimos 5)
+                 guarda como 'preliminary_shots' en BD
+  Fase 2 (kickoff-60min): job dinamico verifica lineup confirmado y confirma/cancela
 """
+import pytz
 import numpy as np
-from datetime import date
+from datetime import date, datetime, timedelta
 from data.api_football import ApiFootballClient, parse_fixture, parse_fixture_statistics, parse_lineups
 from data.news_collector import fetch_team_news
 from data.sentiment import analyze_team_news
@@ -21,14 +27,77 @@ from db.models import (
     upsert_match, insert_prediction, get_cumulative_stats,
     get_current_streak, get_worst_streak, get_config,
     get_top_shooters_by_league, get_match_by_fixture_id,
+    get_player_recent_stats,
 )
 from notifications.telegram import send_prediction_message, send_telegram
 from config.leagues import ALL_LEAGUES
 from config.settings import CURRENT_SEASON, ENABLE_CORNERS_MODEL
 from utils.helpers import today_colombia
+from utils import scheduler_registry
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _is_likely_starter(recent_stats: list, min_fraction: float = 0.6) -> bool:
+    """True si el jugador titularizó (60+ min) en >= 60% de sus últimas apariciones."""
+    if not recent_stats:
+        return False
+    started = sum(1 for s in recent_stats if (s.get("minutes_played") or 0) >= 60)
+    return (started / len(recent_stats)) >= min_fraction
+
+
+def _schedule_lineup_checks(saved_predictions: list):
+    """Para cada shot preliminar guardado, programa un job de verificación de lineup."""
+    from flows.lineup_check import verify_shots_for_match
+
+    scheduler = scheduler_registry.get_scheduler()
+    if not scheduler:
+        logger.warning("Scheduler no registrado — no se pueden programar lineup checks")
+        return
+
+    now_utc = datetime.now(pytz.UTC)
+    scheduled_fixtures = set()
+
+    for pred in saved_predictions:
+        if pred.get("data_source") != "preliminary_shots":
+            continue
+        fixture_id = pred.get("fixture_id")
+        match_id = pred.get("match_id")
+        match_date_utc = pred.get("match_date_utc")
+        if not fixture_id or not match_date_utc or fixture_id in scheduled_fixtures:
+            continue
+
+        try:
+            utc_kickoff = datetime.fromisoformat(str(match_date_utc).replace("Z", "+00:00"))
+            if utc_kickoff.tzinfo is None:
+                utc_kickoff = pytz.UTC.localize(utc_kickoff)
+            job_time = utc_kickoff - timedelta(minutes=60)
+
+            if job_time <= now_utc:
+                logger.info(
+                    f"Kickoff en <60min, verificando lineup ahora: "
+                    f"{pred['home_team']} vs {pred['away_team']}"
+                )
+                verify_shots_for_match(
+                    fixture_id, match_id, pred["home_team"], pred["away_team"]
+                )
+            else:
+                scheduler.add_job(
+                    verify_shots_for_match,
+                    "date",
+                    run_date=job_time,
+                    args=[fixture_id, match_id, pred["home_team"], pred["away_team"]],
+                    id=f"lineup_check_{fixture_id}",
+                    replace_existing=True,
+                )
+                logger.info(
+                    f"Lineup check programado: {job_time.strftime('%H:%M')} UTC — "
+                    f"{pred['home_team']} vs {pred['away_team']}"
+                )
+            scheduled_fixtures.add(fixture_id)
+        except Exception as e:
+            logger.error(f"Error programando lineup check fixture {fixture_id}: {e}")
 
 
 def run_daily_predictions():
@@ -212,48 +281,35 @@ def run_daily_predictions():
                             "expected_value": ev,
                         })
 
-                # --- Prediccion Shots (top shooters con verificación de lineup) ---
+                # --- Prediccion Shots — Fase 1: historial de titularidades ---
+                # Los lineups a las 6 AM casi nunca están disponibles.
+                # Usamos frecuencia histórica de titular como proxy.
+                # La Fase 2 (job dinámico a kickoff-60min) verificará el lineup real.
                 if shots_predictor.model:
                     league_id = match_data["league_id"]
-                    top_shooters = get_top_shooters_by_league(league_id, CURRENT_SEASON, 3)
+                    # Usar temporada propia de la liga (LATAM=2026, Europa=2025)
+                    league_season = fixture_data.get("_league_info", {}).get("season", CURRENT_SEASON)
+                    top_shooters = get_top_shooters_by_league(league_id, league_season, 3)
 
                     relevant_shooters = [
                         s for s in top_shooters
                         if s["team_name"] in (home_team, away_team)
                     ]
 
-                    lineup_status = {}
-                    if relevant_shooters:
-                        lineups_raw = api.get_fixture_lineups(fixture_id)
-                        if lineups_raw:
-                            lineup_status = parse_lineups(lineups_raw)
-
                     for shooter in relevant_shooters:
                         pid = shooter["player_id"]
-                        status = lineup_status.get(pid)
 
-                        if not lineup_status:
+                        # Filtro: titular en >= 60% de últimos 5 partidos
+                        recent_stats = get_player_recent_stats(pid, 5, before_date=today)
+                        if not _is_likely_starter(recent_stats):
                             logger.info(
-                                f"  Lineups no disponibles para {home_team} vs {away_team}, "
-                                f"saltando shots"
-                            )
-                            break
-
-                        if status is None:
-                            logger.info(
-                                f"  {shooter['player_name']} no convocado, descartado"
-                            )
-                            continue
-
-                        if status == "bench":
-                            logger.info(
-                                f"  {shooter['player_name']} en banco, descartado"
+                                f"  {shooter['player_name']}: historial titular <60%, descartado"
                             )
                             continue
 
                         is_home = 1 if shooter["team_name"] == home_team else 0
                         features["is_home"] = is_home
-                        player_feats = build_player_features(shooter["player_id"], features, before_date=today)
+                        player_feats = build_player_features(pid, features, before_date=today)
                         if player_feats is None:
                             continue
 
@@ -261,7 +317,8 @@ def run_daily_predictions():
                         preds_shots = shots_predictor.predict(X_shots, [1.5])
                         if preds_shots:
                             pred = preds_shots[0]
-                            ev = expected_value(pred["probability"], 1.35)
+                            shots_odds = 1.75
+                            ev = expected_value(pred["probability"], shots_odds)
 
                             all_candidates.append({
                                 "match_id": match_id,
@@ -272,10 +329,13 @@ def run_daily_predictions():
                                 "prediction": f"{shooter['player_name']} +1.5 disparos a puerta",
                                 "raw_prediction": pred["prediction"],
                                 "probability": pred["probability"],
-                                "odds": 1.35,
+                                "odds": shots_odds,
                                 "expected_value": ev,
                                 "player_name": shooter["player_name"],
                                 "player_id": pid,
+                                "data_source": "preliminary_shots",
+                                "fixture_id": fixture_id,
+                                "match_date_utc": match_data["match_date"],
                             })
 
             except Exception as e:
@@ -284,6 +344,26 @@ def run_daily_predictions():
 
         # 4. Filtrar por umbral (>= 0.50) y EV positivo; mostrar TODAS
         min_prob = max(threshold, 0.50)
+
+        # Diagnostic: log ALL candidates so Render logs show why predictions are dropped
+        logger.info(f"=== DISTRIBUCIÓN CANDIDATOS ({len(all_candidates)} total) — umbral={min_prob:.0%} ===")
+        by_market = {}
+        for c in all_candidates:
+            by_market.setdefault(c["market_type"], []).append(c)
+        for mtype, cands in by_market.items():
+            cands_sorted = sorted(cands, key=lambda x: x["probability"], reverse=True)
+            logger.info(f"  [{mtype}] {len(cands)} candidatos:")
+            for c in cands_sorted[:5]:
+                pass_prob = c["probability"] >= min_prob
+                pass_ev = c["expected_value"] > 0
+                status = "PASA" if (pass_prob and pass_ev) else f"FILTRADO(prob={'OK' if pass_prob else 'BAJA'},ev={'OK' if pass_ev else 'NEG'})"
+                logger.info(
+                    f"    {status} | prob={c['probability']:.1%} ev={c['expected_value']:+.3f} | "
+                    f"{c['home_team']} vs {c['away_team']} | {c['prediction'][:50]}"
+                )
+        if not all_candidates:
+            logger.warning("  No se generó ningún candidato — verificar API, modelos y ligas activas")
+
         filtered = [
             c for c in all_candidates
             if c["probability"] >= min_prob and c["expected_value"] > 0
@@ -300,8 +380,10 @@ def run_daily_predictions():
 
         # 6. Guardar en BD
         model_version = get_model_version("1x2")
-        data_source = "api_real" if api.api_healthy else "api_degraded"
+        api_source = "api_real" if api.api_healthy else "api_degraded"
         for pred in selected:
+            # Preserve 'preliminary_shots' source; fall back to api health status
+            effective_source = pred.get("data_source") or api_source
             insert_prediction({
                 "match_id": pred["match_id"],
                 "prediction_date": today,
@@ -311,10 +393,14 @@ def run_daily_predictions():
                 "odds": pred["odds"],
                 "expected_value": pred["expected_value"],
                 "model_version": model_version,
-                "data_source": data_source,
+                "data_source": effective_source,
+                "player_id": pred.get("player_id"),
             })
 
-        # 7. Enviar Telegram
+        # 7. Fase 2: programar verificaciones de lineup para shots preliminares
+        _schedule_lineup_checks(selected)
+
+        # 8. Enviar Telegram
         if selected:
             cum_stats = get_cumulative_stats()
             streak = get_current_streak()

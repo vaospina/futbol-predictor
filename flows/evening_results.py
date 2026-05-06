@@ -377,8 +377,10 @@ def _fetch_player_sot(api, fixture_id: int, prediction_text: str) -> dict | None
             if surname in _normalize(p["player_name"]):
                 return {"name": p["player_name"], "sot": p["shots_on_target"], "minutes": p["minutes_played"]}
 
-    logger.warning(f"Jugador '{player_name}' no encontrado en fixture {fixture_id}")
-    return {"name": player_name, "sot": 0, "minutes": 0}
+    # Return None instead of 0/0 — caller will keep prediction pending
+    # rather than incorrectly marking it as a loss (0 SOT, 0 min = "didn't play")
+    logger.warning(f"Jugador '{player_name}' no encontrado en fixture {fixture_id} — dejando pendiente")
+    return None
 
 
 def _get_1x2_result(home_score, away_score, home_team, away_team):

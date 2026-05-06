@@ -139,16 +139,41 @@ def insert_prediction(pred: dict):
     query = """
     INSERT INTO predictions (
         match_id, prediction_date, market_type, prediction,
-        probability, odds, expected_value, model_version, data_source
+        probability, odds, expected_value, model_version, data_source, player_id
     ) VALUES (
         :match_id, :prediction_date, :market_type, :prediction,
-        :probability, :odds, :expected_value, :model_version, :data_source
+        :probability, :odds, :expected_value, :model_version, :data_source, :player_id
     ) RETURNING id
     """
     if "data_source" not in pred:
         pred["data_source"] = "api_real"
+    if "player_id" not in pred:
+        pred["player_id"] = None
     result = fetch_one(query, pred)
     return result["id"] if result else None
+
+
+def get_preliminary_shots_by_match(match_id: int):
+    return fetch_all(
+        """SELECT p.id, p.prediction, p.probability, p.odds, p.player_id
+        FROM predictions p
+        WHERE p.match_id = :mid
+          AND p.market_type = 'player_shots'
+          AND p.data_source = 'preliminary_shots'
+          AND p.result IS NULL""",
+        {"mid": match_id}
+    )
+
+
+def update_prediction_source(pred_id: int, new_source: str):
+    execute_query(
+        "UPDATE predictions SET data_source = :src WHERE id = :pid",
+        {"src": new_source, "pid": pred_id}
+    )
+
+
+def delete_prediction(pred_id: int):
+    execute_query("DELETE FROM predictions WHERE id = :pid", {"pid": pred_id})
 
 
 def get_predictions_by_date(pred_date: date):
@@ -420,7 +445,7 @@ def insert_sentiment(sentiment: dict):
 def get_team_sentiment(team_id: int, days: int = 3):
     return fetch_all(
         """SELECT * FROM news_sentiment
-        WHERE team_id = :tid AND analyzed_at > NOW() - INTERVAL ':days days'
+        WHERE team_id = :tid AND analyzed_at > NOW() - (:days || ' days')::INTERVAL
         ORDER BY analyzed_at DESC""",
         {"tid": team_id, "days": days}
     )

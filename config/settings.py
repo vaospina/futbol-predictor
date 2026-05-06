@@ -22,9 +22,9 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # Temporada actual
 CURRENT_SEASON = 2025
 
-# Flags de modelos. El modelo de corners tiene R² negativo (ver train logs)
-# y se mantiene deshabilitado hasta que rinda mejor que la media.
-ENABLE_CORNERS_MODEL = False
+# Corners: R² negativo en regresión exacta, pero 66.7% en over/under = EV positivo.
+# R² mide precisión de conteo exacto (irrelevante); lo que importa es over/under accuracy.
+ENABLE_CORNERS_MODEL = True
 
 # Predicciones — sin límite diario; se muestran todas con prob>=umbral y EV>0
 SIMULATED_STAKE = 10000  # COP

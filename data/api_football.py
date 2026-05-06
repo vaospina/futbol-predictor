@@ -72,12 +72,13 @@ class ApiFootballClient:
         if not isinstance(response, dict):
             response = {}
 
-        # Detect quota exhaustion from the errors field
+        # Detect quota exhaustion ONLY from explicit API error field.
+        # Do NOT assume quota exhaustion from empty response alone — an empty
+        # response can happen on transient network issues and would abort
+        # predictions for the entire day if misidentified as quota exhausted.
         errors = data.get("errors", {})
         quota_exhausted = False
         if isinstance(errors, dict) and "requests" in errors:
-            quota_exhausted = True
-        elif not response and not data.get("_api_error", False):
             quota_exhausted = True
 
         if quota_exhausted and not _QUOTA_ALERT_SENT:

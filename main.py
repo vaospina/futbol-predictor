@@ -18,6 +18,7 @@ from flows.evening_results import run_evaluation_check
 from db.migrations import run_migrations
 from notifications.telegram import send_telegram
 from utils.helpers import now_colombia
+from utils import scheduler_registry
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -78,6 +79,7 @@ def main():
     health_thread.start()
 
     scheduler = BlockingScheduler(timezone="UTC")
+    scheduler_registry.register(scheduler)
 
     # 6:00 AM Colombia = 11:00 UTC
     scheduler.add_job(
