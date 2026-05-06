@@ -307,6 +307,21 @@ def run_daily_predictions():
                             )
                             continue
 
+                        # Guard 1: avg_SOT reciente mínimo para línea "over 1.5"
+                        # Con mu < 1.0, P(X >= 2) < 26% — no puede ser candidato viable
+                        recent_sot_vals = [s.get("shots_on_target") or 0 for s in recent_stats]
+                        avg_sot_recent = sum(recent_sot_vals) / len(recent_sot_vals) if recent_sot_vals else 0
+                        hist_over15_rate = (
+                            sum(1 for v in recent_sot_vals if v >= 2) / len(recent_sot_vals)
+                            if recent_sot_vals else 0
+                        )
+                        if avg_sot_recent < 1.0:
+                            logger.info(
+                                f"  {shooter['player_name']}: avg_SOT={avg_sot_recent:.2f} < 1.0 "
+                                f"(over15_hist={hist_over15_rate:.0%}) — descartado"
+                            )
+                            continue
+
                         is_home = 1 if shooter["team_name"] == home_team else 0
                         features["is_home"] = is_home
                         player_feats = build_player_features(pid, features, before_date=today)
@@ -317,6 +332,17 @@ def run_daily_predictions():
                         preds_shots = shots_predictor.predict(X_shots, [1.5])
                         if preds_shots:
                             pred = preds_shots[0]
+
+                            # Guard 2: detección de miscalibración
+                            # Si el modelo predice >65% pero el histórico muestra <30% de over_1.5,
+                            # es señal de sobreestimación (modelo europeo aplicado a liga LATAM).
+                            if pred["probability"] > 0.65 and hist_over15_rate < 0.30:
+                                logger.warning(
+                                    f"  {shooter['player_name']}: modelo={pred['probability']:.0%} >> "
+                                    f"histórico={hist_over15_rate:.0%} — miscalibración, descartado"
+                                )
+                                continue
+
                             shots_odds = 1.75
                             ev = expected_value(pred["probability"], shots_odds)
 

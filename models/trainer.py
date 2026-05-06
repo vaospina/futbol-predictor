@@ -213,30 +213,53 @@ def train_all_models(version_suffix: str = None) -> dict:
 
     # --- Modelo Shots ---
     logger.info("=== Entrenando Modelo Shots ===")
-    X_shots, y_shots = prepare_training_data_shots()
-    if len(X_shots) >= 30:
-        predictor_shots = ShotsPredictor()
-        metrics_shots = predictor_shots.train(X_shots, y_shots)
-        predictor_shots.save()
 
-        deactivate_models("player_shots")
-        insert_model_version({
-            "version": f"{version}_shots",
-            "model_type": "player_shots",
-            "training_samples": metrics_shots["training_samples"],
-            "accuracy_cv": metrics_shots["r2_cv"],
-            "f1_score": None,
-            "log_loss": metrics_shots["mae_cv"],
-            "is_active": True,
-            "model_binary": None,
-            "feature_importance": json.dumps(predictor_shots.get_feature_importance()),
-            "notes": f"R2={metrics_shots['r2_cv']:.3f}, MAE={metrics_shots['mae_cv']:.2f}",
-        })
-        set_config("model_active_shots", f"{version}_shots")
-        results["shots"] = metrics_shots
+    # Gate: requiere mínimo de predicciones evaluadas en producción antes de reentrenar.
+    # Sin suficiente feedback real no hay señal para validar si el modelo mejoró.
+    MIN_EVALUATED_SHOTS = 500
+    evaluated_row = fetch_all(
+        "SELECT COUNT(*) as n FROM predictions "
+        "WHERE market_type = 'player_shots' AND result IS NOT NULL"
+    )
+    evaluated_n = (evaluated_row[0] if evaluated_row else {}).get("n", 0)
+
+    if evaluated_n < MIN_EVALUATED_SHOTS:
+        logger.warning(
+            f"Shots: solo {evaluated_n} predicciones evaluadas "
+            f"(mínimo {MIN_EVALUATED_SHOTS}) — saltando reentrenamiento"
+        )
+        results["shots"] = {
+            "skipped": True,
+            "reason": f"evaluated_predictions={evaluated_n}<{MIN_EVALUATED_SHOTS}",
+        }
     else:
-        logger.warning(f"Insuficientes datos para shots: {len(X_shots)}")
-        results["shots"] = {"error": "insufficient_data", "samples": len(X_shots)}
+        X_shots, y_shots = prepare_training_data_shots()
+        if len(X_shots) >= 30:
+            predictor_shots = ShotsPredictor()
+            metrics_shots = predictor_shots.train(X_shots, y_shots)
+            predictor_shots.save()
+
+            deactivate_models("player_shots")
+            insert_model_version({
+                "version": f"{version}_shots",
+                "model_type": "player_shots",
+                "training_samples": metrics_shots["training_samples"],
+                "accuracy_cv": metrics_shots["r2_cv"],
+                "f1_score": None,
+                "log_loss": metrics_shots["mae_cv"],
+                "is_active": True,
+                "model_binary": None,
+                "feature_importance": json.dumps(predictor_shots.get_feature_importance()),
+                "notes": (
+                    f"R2={metrics_shots['r2_cv']:.3f}, MAE={metrics_shots['mae_cv']:.2f}, "
+                    f"best_iter={metrics_shots.get('best_iteration', '?')}"
+                ),
+            })
+            set_config("model_active_shots", f"{version}_shots")
+            results["shots"] = metrics_shots
+        else:
+            logger.warning(f"Insuficientes datos de entrenamiento para shots: {len(X_shots)}")
+            results["shots"] = {"error": "insufficient_data", "samples": len(X_shots)}
 
     logger.info(f"Entrenamiento completado. Version: {version}")
     return results

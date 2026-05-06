@@ -35,9 +35,10 @@ def run_daily_retrain():
 
         promotions = {}
         for model_type, metrics in results.items():
-            if "error" in metrics:
+            if "error" in metrics or "skipped" in metrics:
                 promotions[model_type] = False
-                logger.warning(f"Modelo {model_type}: {metrics['error']}")
+                reason = metrics.get("error") or metrics.get("reason", "skipped")
+                logger.warning(f"Modelo {model_type}: {reason}")
                 continue
             promote = should_promote_model(metrics, model_type)
             promotions[model_type] = promote
@@ -57,6 +58,9 @@ def run_daily_retrain():
         for model_type, metrics in results.items():
             if "error" in metrics:
                 report_lines.append(f"\u26a0\ufe0f *{model_type}*: {metrics['error']}")
+                continue
+            if "skipped" in metrics:
+                report_lines.append(f"\u23ed\ufe0f *{model_type}*: {metrics.get('reason', 'saltado')}")
                 continue
             promoted = promotions.get(model_type, False)
             status = "\u2705 Promovido" if promoted else "\u274c Mantenido anterior"
