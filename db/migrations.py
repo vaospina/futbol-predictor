@@ -158,11 +158,11 @@ CREATE INDEX IF NOT EXISTS idx_news_team ON news_sentiment(team_id);
 
 
 EXTRA_MIGRATIONS = [
-    "ALTER TABLE predictions ADD COLUMN data_source VARCHAR(30) DEFAULT 'api_real'",
-    "ALTER TABLE predictions ADD COLUMN player_id INTEGER",
-    "ALTER TABLE player_stats ADD COLUMN goals INTEGER DEFAULT 0",
-    "ALTER TABLE matches ADD COLUMN home_ht_score INTEGER",
-    "ALTER TABLE matches ADD COLUMN away_ht_score INTEGER",
+    "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS data_source VARCHAR(30) DEFAULT 'api_real'",
+    "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS player_id INTEGER",
+    "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS goals INTEGER DEFAULT 0",
+    "ALTER TABLE matches ADD COLUMN IF NOT EXISTS home_ht_score INTEGER",
+    "ALTER TABLE matches ADD COLUMN IF NOT EXISTS away_ht_score INTEGER",
 ]
 
 
