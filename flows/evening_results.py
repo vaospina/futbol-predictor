@@ -16,7 +16,7 @@ from db.models import (
     get_recent_pending_predictions, get_predictions_by_date,
     update_prediction_result, upsert_match,
     upsert_daily_performance, get_cumulative_stats,
-    get_accuracy_by_type, fetch_one,
+    get_accuracy_by_type, fetch_one, void_stale_shot_predictions,
 )
 from models.expected_value import roi_from_predictions
 from models.evaluator import get_current_threshold, get_model_version
@@ -169,12 +169,24 @@ def run_evaluation_check():
 
 
 def _check_and_consolidate(check_date: date):
-    """Si TODAS las predicciones de check_date están resueltas, envía
-    consolidado y dispara re-entrenamiento."""
+    """Si todas las predicciones de check_date están resueltas (o void), envía
+    consolidado y dispara re-entrenamiento.
+
+    FIX A: predicciones de player_shots sin stats tras 26h se marcan 'void'
+    automáticamente para no bloquear la consolidación. Void no cuenta para
+    accuracy ni ROI.
+    """
+    # Step 1: auto-void shots sin resolver tras 26h
+    voided = void_stale_shot_predictions(check_date)
+    if voided > 0:
+        logger.info(f"  {voided} predicciones de shots marcadas como void ({check_date})")
+
     all_preds = get_predictions_by_date(check_date)
     if not all_preds:
         return
 
+    # Step 2: bloquear solo si quedan predicciones genuinamente sin resolver
+    # (void = result set, no bloquea)
     pending = [p for p in all_preds if p.get("result") is None]
     if pending:
         return
@@ -189,7 +201,8 @@ def _check_and_consolidate(check_date: date):
 
     logger.info(f"=== CONSOLIDANDO RESULTADOS {check_date} ===")
 
-    evaluated = [p for p in all_preds if p.get("result") is not None]
+    # Solo win/loss cuentan para accuracy y ROI — void se excluye
+    evaluated = [p for p in all_preds if p.get("result") in ("win", "loss")]
     day_correct = sum(1 for p in evaluated if p["result"] == "win")
     day_total = len(evaluated)
     day_accuracy = day_correct / day_total if day_total > 0 else 0

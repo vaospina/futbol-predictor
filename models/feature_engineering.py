@@ -28,15 +28,22 @@ def build_match_features(match: dict, sentiment_home: dict = None, sentiment_awa
     match_date = match.get("match_date")
     league_id = match.get("league_id")
 
+    # Preserve original timestamp BEFORE converting to Colombia date.
+    # Used as odds filter cutoff to prevent training leakage from re-scraped
+    # post-match odds (FIX D).
+    odds_cutoff = match_date  # original value (str, datetime, or date)
+
     _tz_col = pytz.timezone("America/Bogota")
     if isinstance(match_date, str):
         try:
             # Parse the full UTC ISO timestamp and convert to Colombia date
             utc_dt = datetime.fromisoformat(match_date.replace("Z", "+00:00"))
+            odds_cutoff = utc_dt  # tz-aware datetime for precise filtering
             match_date = utc_dt.astimezone(_tz_col).date()
         except Exception:
             match_date = date.fromisoformat(match_date[:10])
     elif hasattr(match_date, "date"):
+        odds_cutoff = match_date  # already a datetime object
         match_date = match_date.date()
 
     # === Rendimiento del equipo (ultimos 20 para filtrar por competicion) ===
@@ -133,7 +140,7 @@ def build_match_features(match: dict, sentiment_home: dict = None, sentiment_awa
 
     # === Odds del mercado ===
     match_id = match.get("id") or match.get("match_id")
-    odds = get_match_odds_summary(match_id) if match_id else {}
+    odds = get_match_odds_summary(match_id, before_date=odds_cutoff) if match_id else {}
     features["odds_home_win"] = safe_float(odds.get("odds_home_win"), 2.0)
     features["odds_draw"] = safe_float(odds.get("odds_draw"), 3.3)
     features["odds_away_win"] = safe_float(odds.get("odds_away_win"), 3.5)

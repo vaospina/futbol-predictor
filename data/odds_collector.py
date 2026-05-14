@@ -55,9 +55,13 @@ def collect_odds_for_fixture(api: ApiFootballClient, fixture_id: int, match_id: 
     return parsed
 
 
-def get_match_odds_summary(match_id: int) -> dict:
-    """Returns odds summary for a match from DB."""
-    odds = get_odds_for_match(match_id)
+def get_match_odds_summary(match_id: int, before_date=None) -> dict:
+    """Returns odds summary for a match from DB.
+
+    before_date: if provided, only returns odds captured before that timestamp.
+    Use during training to avoid leakage from re-scraped post-match odds.
+    """
+    odds = get_odds_for_match(match_id, before_date=before_date)
 
     summary = {}
     for o in odds:

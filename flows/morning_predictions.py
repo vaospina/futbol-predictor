@@ -47,6 +47,25 @@ def _is_likely_starter(recent_stats: list, min_fraction: float = 0.6) -> bool:
     return (started / len(recent_stats)) >= min_fraction
 
 
+def _get_injured_player_ids(api, fixture_id: int) -> set:
+    """Consulta /injuries y retorna set de player_ids excluidos (lesionado/dudoso/suspendido).
+    Si la API falla, retorna set vacío para no bloquear predicciones."""
+    try:
+        injuries = api.get_injuries(fixture_id)
+        excluded = set()
+        for item in injuries:
+            player = item.get("player", {})
+            reason = (item.get("type") or "").lower()
+            if any(s in reason for s in ("injured", "doubtful", "suspended", "injury", "suspension")):
+                pid = player.get("id")
+                if pid:
+                    excluded.add(pid)
+        return excluded
+    except Exception as e:
+        logger.warning(f"  No se pudo obtener lesiones para fixture {fixture_id}: {e}")
+        return set()
+
+
 def _schedule_lineup_checks(saved_predictions: list):
     """Para cada shot preliminar guardado, programa un job de verificación de lineup."""
     from flows.lineup_check import verify_shots_for_match
@@ -296,8 +315,24 @@ def run_daily_predictions():
                         if s["team_name"] in (home_team, away_team)
                     ]
 
+                    # FIX B: consultar lesiones/dudosos/suspendidos para este fixture
+                    injured_ids = _get_injured_player_ids(api, fixture_id)
+                    excluded_by_injury = sum(1 for s in relevant_shooters if s["player_id"] in injured_ids)
+                    if excluded_by_injury > 0:
+                        logger.info(
+                            f"  Fixture {fixture_id}: {excluded_by_injury} jugadores "
+                            f"excluidos por lesión/duda/suspensión"
+                        )
+
                     for shooter in relevant_shooters:
                         pid = shooter["player_id"]
+
+                        # FIX B: excluir lesionados, dudosos y suspendidos
+                        if pid in injured_ids:
+                            logger.info(
+                                f"  {shooter['player_name']}: EXCLUIDO (lesionado/dudoso/suspendido)"
+                            )
+                            continue
 
                         # Filtro: titular en >= 60% de últimos 5 partidos
                         recent_stats = get_player_recent_stats(pid, 5, before_date=today)
@@ -307,18 +342,21 @@ def run_daily_predictions():
                             )
                             continue
 
-                        # Guard 1: avg_SOT reciente mínimo para línea "over 1.5"
-                        # Con mu < 1.0, P(X >= 2) < 26% — no puede ser candidato viable
                         recent_sot_vals = [s.get("shots_on_target") or 0 for s in recent_stats]
                         avg_sot_recent = sum(recent_sot_vals) / len(recent_sot_vals) if recent_sot_vals else 0
+                        hist_over05_rate = (
+                            sum(1 for v in recent_sot_vals if v >= 1) / len(recent_sot_vals)
+                            if recent_sot_vals else 0
+                        )
                         hist_over15_rate = (
                             sum(1 for v in recent_sot_vals if v >= 2) / len(recent_sot_vals)
                             if recent_sot_vals else 0
                         )
-                        if avg_sot_recent < 1.0:
+
+                        # FIX C: umbral mínimo reducido a 0.5 para habilitar over 0.5
+                        if avg_sot_recent < 0.5:
                             logger.info(
-                                f"  {shooter['player_name']}: avg_SOT={avg_sot_recent:.2f} < 1.0 "
-                                f"(over15_hist={hist_over15_rate:.0%}) — descartado"
+                                f"  {shooter['player_name']}: avg_SOT={avg_sot_recent:.2f} < 0.5 — descartado"
                             )
                             continue
 
@@ -328,41 +366,77 @@ def run_daily_predictions():
                         if player_feats is None:
                             continue
 
-                        X_shots = np.array([[player_feats.get(f, 0) for f in PLAYER_FEATURE_NAMES]], dtype=np.float32)
-                        preds_shots = shots_predictor.predict(X_shots, [1.5])
-                        if preds_shots:
-                            pred = preds_shots[0]
+                        X_row = np.array(
+                            [[player_feats.get(f, 0) for f in PLAYER_FEATURE_NAMES]],
+                            dtype=np.float32,
+                        )
+                        # FIX C: evaluar ambas líneas duplicando la fila de features
+                        X_both = np.vstack([X_row, X_row])
+                        preds_both = shots_predictor.predict(X_both, [0.5, 1.5])
+                        pred_05 = preds_both[0]
+                        pred_15 = preds_both[1]
 
-                            # Guard 2: detección de miscalibración
-                            # Si el modelo predice >65% pero el histórico muestra <30% de over_1.5,
-                            # es señal de sobreestimación (modelo europeo aplicado a liga LATAM).
-                            if pred["probability"] > 0.65 and hist_over15_rate < 0.30:
+                        eligible = []
+
+                        # over 0.5: prob >= 72%, avg_sot >= 0.5
+                        if avg_sot_recent >= 0.5 and pred_05["probability"] >= 0.72:
+                            if pred_05["probability"] > 0.85 and hist_over05_rate < 0.50:
                                 logger.warning(
-                                    f"  {shooter['player_name']}: modelo={pred['probability']:.0%} >> "
-                                    f"histórico={hist_over15_rate:.0%} — miscalibración, descartado"
+                                    f"  {shooter['player_name']}: over0.5 miscalibrado "
+                                    f"(modelo={pred_05['probability']:.0%} vs hist={hist_over05_rate:.0%})"
                                 )
-                                continue
+                            else:
+                                odds_05 = 1.55  # línea más fácil → odds más bajas
+                                eligible.append({
+                                    "line": 0.5,
+                                    "probability": pred_05["probability"],
+                                    "odds": odds_05,
+                                    "ev": expected_value(pred_05["probability"], odds_05),
+                                    "prediction_text": f"{shooter['player_name']} +0.5 disparos a puerta",
+                                    "raw_prediction": pred_05["prediction"],
+                                })
 
-                            shots_odds = 1.75
-                            ev = expected_value(pred["probability"], shots_odds)
+                        # over 1.5: prob >= 60%, avg_sot >= 1.0
+                        if avg_sot_recent >= 1.0 and pred_15["probability"] >= 0.60:
+                            if pred_15["probability"] > 0.65 and hist_over15_rate < 0.30:
+                                logger.warning(
+                                    f"  {shooter['player_name']}: over1.5 miscalibrado "
+                                    f"(modelo={pred_15['probability']:.0%} vs hist={hist_over15_rate:.0%})"
+                                )
+                            else:
+                                odds_15 = 1.75
+                                eligible.append({
+                                    "line": 1.5,
+                                    "probability": pred_15["probability"],
+                                    "odds": odds_15,
+                                    "ev": expected_value(pred_15["probability"], odds_15),
+                                    "prediction_text": f"{shooter['player_name']} +1.5 disparos a puerta",
+                                    "raw_prediction": pred_15["prediction"],
+                                })
 
-                            all_candidates.append({
-                                "match_id": match_id,
-                                "home_team": home_team,
-                                "away_team": away_team,
-                                "league_name": league_name,
-                                "market_type": "player_shots",
-                                "prediction": f"{shooter['player_name']} +1.5 disparos a puerta",
-                                "raw_prediction": pred["prediction"],
-                                "probability": pred["probability"],
-                                "odds": shots_odds,
-                                "expected_value": ev,
-                                "player_name": shooter["player_name"],
-                                "player_id": pid,
-                                "data_source": "preliminary_shots",
-                                "fixture_id": fixture_id,
-                                "match_date_utc": match_data["match_date"],
-                            })
+                        if not eligible:
+                            continue
+
+                        # Elegir el mercado con mayor EV esperado
+                        best = max(eligible, key=lambda x: x["ev"])
+
+                        all_candidates.append({
+                            "match_id": match_id,
+                            "home_team": home_team,
+                            "away_team": away_team,
+                            "league_name": league_name,
+                            "market_type": "player_shots",
+                            "prediction": best["prediction_text"],
+                            "raw_prediction": best["raw_prediction"],
+                            "probability": best["probability"],
+                            "odds": best["odds"],
+                            "expected_value": best["ev"],
+                            "player_name": shooter["player_name"],
+                            "player_id": pid,
+                            "data_source": "preliminary_shots",
+                            "fixture_id": fixture_id,
+                            "match_date_utc": match_data["match_date"],
+                        })
 
             except Exception as e:
                 logger.error(f"Error procesando fixture: {e}")

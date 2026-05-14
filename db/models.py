@@ -227,6 +227,25 @@ def update_prediction_result(pred_id: int, result: str, actual_outcome: str):
     )
 
 
+def void_stale_shot_predictions(check_date: date) -> int:
+    """Mark player_shots predictions as 'void' when the match ended >26h ago
+    and stats are still unavailable. Returns the number of rows voided."""
+    result = execute_query(
+        """UPDATE predictions
+        SET result = 'void',
+            actual_outcome = 'auto-void: stats no disponibles 26h despues del partido'
+        WHERE market_type = 'player_shots'
+          AND result IS NULL
+          AND prediction_date = :d
+          AND match_id IN (
+              SELECT id FROM matches
+              WHERE match_date < NOW() - INTERVAL '26 hours'
+          )""",
+        {"d": check_date}
+    )
+    return result.rowcount if result else 0
+
+
 # === DAILY PERFORMANCE ===
 
 def upsert_daily_performance(perf: dict):
@@ -420,7 +439,12 @@ def insert_odds(odds_data: dict):
     execute_query(query, odds_data)
 
 
-def get_odds_for_match(match_id: int):
+def get_odds_for_match(match_id: int, before_date=None):
+    if before_date is not None:
+        return fetch_all(
+            "SELECT * FROM odds_history WHERE match_id = :mid AND captured_at <= :bd",
+            {"mid": match_id, "bd": before_date}
+        )
     return fetch_all(
         "SELECT * FROM odds_history WHERE match_id = :mid",
         {"mid": match_id}
