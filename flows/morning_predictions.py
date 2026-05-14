@@ -27,11 +27,11 @@ from db.models import (
     upsert_match, insert_prediction, get_cumulative_stats,
     get_current_streak, get_worst_streak, get_config,
     get_top_shooters_by_league, get_match_by_fixture_id,
-    get_player_recent_stats,
+    get_player_recent_stats, get_team_corner_avg,
 )
 from notifications.telegram import send_prediction_message, send_telegram
 from config.leagues import ALL_LEAGUES
-from config.settings import CURRENT_SEASON, ENABLE_CORNERS_MODEL
+from config.settings import CURRENT_SEASON, ENABLE_CORNERS_MODEL, ENABLE_CORNERS_STATS
 from utils.helpers import today_colombia
 from utils import scheduler_registry
 from utils.logger import get_logger
@@ -299,6 +299,35 @@ def run_daily_predictions():
                             "odds": odds_corners,
                             "expected_value": ev,
                         })
+
+                # --- Prediccion Corners Estadístico (reglas puras, sin ML) ---
+                if ENABLE_CORNERS_STATS:
+                    avg_home_c = get_team_corner_avg(home_id, last_n=5, home_only=True, before_date=today)
+                    avg_away_c = get_team_corner_avg(away_id, last_n=5, home_only=False, before_date=today)
+                    if avg_home_c is not None and avg_away_c is not None:
+                        avg_total_c = avg_home_c + avg_away_c
+                        if avg_total_c >= 9.5:
+                            cs_line, prob_cs = 8.5, min(avg_total_c / 12.0, 0.78)
+                        elif avg_total_c >= 7.5:
+                            cs_line, prob_cs = 6.5, min(avg_total_c / 10.0, 0.78)
+                        else:
+                            cs_line, prob_cs = None, 0.0
+                        if cs_line is not None and prob_cs >= 0.62:
+                            odds_cs = features.get("odds_over_corners", 1.9)
+                            ev_cs = expected_value(prob_cs, odds_cs)
+                            all_candidates.append({
+                                "match_id": match_id,
+                                "home_team": home_team,
+                                "away_team": away_team,
+                                "league_name": league_name,
+                                "market_type": "corners_stats",
+                                "prediction": f"over {cs_line} corners",
+                                "raw_prediction": f"over_{cs_line}",
+                                "probability": prob_cs,
+                                "odds": odds_cs,
+                                "expected_value": ev_cs,
+                                "data_source": "stats_rule",
+                            })
 
                 # --- Prediccion Shots — Fase 1: historial de titularidades ---
                 # Los lineups a las 6 AM casi nunca están disponibles.

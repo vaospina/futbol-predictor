@@ -143,7 +143,9 @@ def insert_prediction(pred: dict):
     ) VALUES (
         :match_id, :prediction_date, :market_type, :prediction,
         :probability, :odds, :expected_value, :model_version, :data_source, :player_id
-    ) RETURNING id
+    )
+    ON CONFLICT DO NOTHING
+    RETURNING id
     """
     if "data_source" not in pred:
         pred["data_source"] = "api_real"
@@ -412,6 +414,38 @@ def get_player_recent_stats(player_id: int, n: int = 10, before_date: date = Non
         ORDER BY match_date DESC LIMIT :n""",
         {"pid": player_id, "n": n, "bd": before}
     )
+
+
+def get_team_corner_avg(
+    team_id: int,
+    last_n: int = 5,
+    home_only: bool = True,
+    before_date=None,
+) -> float | None:
+    """Promedio de corners totales (ambos equipos) en los últimos N partidos del equipo.
+    home_only=True -> solo partidos como local; False -> solo como visitante.
+    Retorna None si no hay datos suficientes.
+    """
+    before = before_date or today_colombia()
+    side_filter = "home_team_id = :tid" if home_only else "away_team_id = :tid"
+    rows = fetch_all(
+        f"""SELECT home_corners + away_corners AS total
+        FROM (
+            SELECT home_corners, away_corners
+            FROM matches
+            WHERE {side_filter}
+              AND home_corners IS NOT NULL
+              AND status = 'finished'
+              AND (match_date - INTERVAL '5 hours')::date < :bd
+            ORDER BY match_date DESC
+            LIMIT :n
+        ) sub""",
+        {"tid": team_id, "bd": before, "n": last_n},
+    )
+    if not rows:
+        return None
+    totals = [r["total"] for r in rows]
+    return sum(totals) / len(totals) if totals else None
 
 
 def get_top_shooters_by_league(league_id: int, season: int, min_matches: int = 5):

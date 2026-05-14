@@ -58,7 +58,7 @@ def send_prediction_message(predictions: list, model_version: str, threshold: fl
     from utils.helpers import today_colombia
     fecha = today_colombia().strftime("%d/%m/%Y")
 
-    market_emoji = {"1x2": "⚽", "corners": "\U0001f532", "player_shots": "\U0001f3af"}
+    market_emoji = {"1x2": "⚽", "corners": "\U0001f532", "corners_stats": "🔢", "player_shots": "\U0001f3af"}
 
     header = [
         f"\U0001f3df *Predicciones {fecha}*",

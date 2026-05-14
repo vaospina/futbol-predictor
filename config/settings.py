@@ -22,12 +22,14 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # Temporada actual
 CURRENT_SEASON = 2025
 
-# Corners desactivado: R² = -7.91% en el modelo activo (v20260430_0623_corners),
-# lo que significa que predice peor que la media. El 66.7% de accuracy over/under
-# observado venía de una muestra demasiado pequeña para ser significativa.
-# TODO: reentrenar corners con métrica de clasificación over/under (accuracy/F1)
-#       en lugar de regresión MSE/R², y reactivar cuando acc_cv > 55%.
+# Modelo ML de corners desactivado: R² = -7.91% — predice peor que la media.
+# Se reactivará cuando se entrene con métrica over/under (acc_cv > 55%).
 ENABLE_CORNERS_MODEL = False
+
+# Corners basado en reglas estadísticas puras (sin ML).
+# Usa el promedio histórico de corners del equipo local en casa.
+# Activado con 8.830 partidos disponibles y avg=9.62 corners/partido.
+ENABLE_CORNERS_STATS = True
 
 # Predicciones — sin límite diario; se muestran todas con prob>=umbral y EV>0
 SIMULATED_STAKE = 10000  # COP

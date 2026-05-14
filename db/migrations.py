@@ -163,6 +163,16 @@ EXTRA_MIGRATIONS = [
     "ALTER TABLE player_stats ADD COLUMN IF NOT EXISTS goals INTEGER DEFAULT 0",
     "ALTER TABLE matches ADD COLUMN IF NOT EXISTS home_ht_score INTEGER",
     "ALTER TABLE matches ADD COLUMN IF NOT EXISTS away_ht_score INTEGER",
+    # Limpiar duplicados antes de agregar constraint único (mantener el de menor id)
+    """DELETE FROM predictions WHERE id NOT IN (
+        SELECT MIN(id) FROM predictions
+        GROUP BY match_id, market_type, prediction
+    )""",
+    # Constraint único: un partido no puede tener la misma predicción dos veces
+    # (para shots la predicción incluye el nombre del jugador, por eso es suficiente)
+    """ALTER TABLE predictions
+       ADD CONSTRAINT unique_prediction
+       UNIQUE (match_id, market_type, prediction)""",
 ]
 
 

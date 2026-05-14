@@ -93,7 +93,7 @@ def run_evaluation_check():
 
                 # Verificar datos completos según mercado
                 market = pred.get("market_type")
-                if market == "corners":
+                if market in ("corners", "corners_stats"):
                     if match_data.get("home_corners") is None or match_data.get("away_corners") is None:
                         logger.warning(
                             f"  {pred['home_team']} vs {pred['away_team']}: "
@@ -303,6 +303,20 @@ def _evaluate_prediction(pred: dict) -> tuple:
             except (ValueError, IndexError):
                 won = False
         else:
+            won = False
+        return ("win" if won else "loss"), actual
+
+    elif market == "corners_stats":
+        home_corners = pred.get("home_corners")
+        away_corners = pred.get("away_corners")
+        if home_corners is None or away_corners is None:
+            return None, "no_corners_data"
+        total_corners = home_corners + away_corners
+        actual = f"{total_corners} corners"
+        try:
+            line = float(prediction.split("over ")[1].split(" ")[0])
+            won = total_corners > line
+        except (ValueError, IndexError):
             won = False
         return ("win" if won else "loss"), actual
 
