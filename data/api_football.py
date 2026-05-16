@@ -2,6 +2,7 @@
 Cliente API-Football - Conexion directa (NO RapidAPI).
 Header de autenticacion: x-apisports-key
 """
+import json
 import requests
 from datetime import date, datetime
 from config.settings import API_FOOTBALL_KEY, API_FOOTBALL_BASE_URL, CURRENT_SEASON
@@ -12,6 +13,13 @@ logger = get_logger(__name__)
 _FAILURE_COUNT = 0
 _ALERT_SENT = False
 _QUOTA_ALERT_SENT = False
+
+# Caché de respuestas API con scope de día (se invalida al cambiar la fecha)
+_api_cache: dict = {}  # cache_key -> (date, response)
+
+
+def _make_cache_key(endpoint: str, params: dict | None) -> str:
+    return f"{endpoint}:{json.dumps(params or {}, sort_keys=True, default=str)}"
 
 
 class ApiFootballClient:
@@ -62,6 +70,18 @@ class ApiFootballClient:
                 )
             except Exception:
                 pass
+
+    def _get_cached(self, endpoint: str, params: dict = None) -> dict:
+        """Igual que _get pero cachea la respuesta durante el día en curso."""
+        key = _make_cache_key(endpoint, params)
+        today = date.today()
+        if key in _api_cache:
+            cached_date, cached_val = _api_cache[key]
+            if cached_date == today:
+                return cached_val
+        result = self._get(endpoint, params)
+        _api_cache[key] = (today, result)
+        return result
 
     def check_status(self) -> dict:
         global _QUOTA_ALERT_SENT
@@ -171,7 +191,7 @@ class ApiFootballClient:
 
     def get_standings(self, league_id: int, season: int = None):
         season = season or CURRENT_SEASON
-        data = self._get("standings", {"league": league_id, "season": season})
+        data = self._get_cached("standings", {"league": league_id, "season": season})
         response = data.get("response", [])
         if response and response[0].get("league", {}).get("standings"):
             return response[0]["league"]["standings"][0]
@@ -179,7 +199,7 @@ class ApiFootballClient:
 
     def get_fixture_odds(self, fixture_id: int):
         """Get odds for a fixture. Tries Bet365 first, falls back to any available."""
-        data = self._get("odds", {"fixture": fixture_id})
+        data = self._get_cached("odds", {"fixture": fixture_id})
         return data.get("response", [])
 
     def get_player_stats(self, player_id: int, season: int = None, league_id: int = None):
@@ -199,7 +219,7 @@ class ApiFootballClient:
         return data.get("response", [])
 
     def get_fixture_player_stats(self, fixture_id: int):
-        data = self._get("fixtures/players", {"fixture": fixture_id})
+        data = self._get_cached("fixtures/players", {"fixture": fixture_id})
         return data.get("response", [])
 
     def get_fixture_by_id(self, fixture_id: int):
@@ -209,7 +229,7 @@ class ApiFootballClient:
 
     def get_injuries(self, fixture_id: int) -> list:
         """Returns list of injured/doubtful/suspended players for a fixture."""
-        data = self._get("injuries", {"fixture": fixture_id})
+        data = self._get_cached("injuries", {"fixture": fixture_id})
         return data.get("response", [])
 
     def get_season_fixtures(self, league_id: int, season: int = None):

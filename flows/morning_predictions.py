@@ -377,12 +377,7 @@ def run_daily_predictions():
                             sum(1 for v in recent_sot_vals if v >= 1) / len(recent_sot_vals)
                             if recent_sot_vals else 0
                         )
-                        hist_over15_rate = (
-                            sum(1 for v in recent_sot_vals if v >= 2) / len(recent_sot_vals)
-                            if recent_sot_vals else 0
-                        )
 
-                        # FIX C: umbral mínimo reducido a 0.5 para habilitar over 0.5
                         if avg_sot_recent < 0.5:
                             logger.info(
                                 f"  {shooter['player_name']}: avg_SOT={avg_sot_recent:.2f} < 0.5 — descartado"
@@ -399,67 +394,36 @@ def run_daily_predictions():
                             [[player_feats.get(f, 0) for f in PLAYER_FEATURE_NAMES]],
                             dtype=np.float32,
                         )
-                        # FIX C: evaluar ambas líneas duplicando la fila de features
-                        X_both = np.vstack([X_row, X_row])
-                        preds_both = shots_predictor.predict(X_both, [0.5, 1.5])
-                        pred_05 = preds_both[0]
-                        pred_15 = preds_both[1]
+                        preds_05 = shots_predictor.predict(X_row, [0.5])
+                        if not preds_05:
+                            continue
+                        pred_05 = preds_05[0]
 
-                        eligible = []
-
-                        # over 0.5: prob >= 72%, avg_sot >= 0.5
-                        if avg_sot_recent >= 0.5 and pred_05["probability"] >= 0.72:
-                            if pred_05["probability"] > 0.85 and hist_over05_rate < 0.50:
-                                logger.warning(
-                                    f"  {shooter['player_name']}: over0.5 miscalibrado "
-                                    f"(modelo={pred_05['probability']:.0%} vs hist={hist_over05_rate:.0%})"
-                                )
-                            else:
-                                odds_05 = 1.55  # línea más fácil → odds más bajas
-                                eligible.append({
-                                    "line": 0.5,
-                                    "probability": pred_05["probability"],
-                                    "odds": odds_05,
-                                    "ev": expected_value(pred_05["probability"], odds_05),
-                                    "prediction_text": f"{shooter['player_name']} +0.5 disparos a puerta",
-                                    "raw_prediction": pred_05["prediction"],
-                                })
-
-                        # over 1.5: prob >= 60%, avg_sot >= 1.0
-                        if avg_sot_recent >= 1.0 and pred_15["probability"] >= 0.60:
-                            if pred_15["probability"] > 0.65 and hist_over15_rate < 0.30:
-                                logger.warning(
-                                    f"  {shooter['player_name']}: over1.5 miscalibrado "
-                                    f"(modelo={pred_15['probability']:.0%} vs hist={hist_over15_rate:.0%})"
-                                )
-                            else:
-                                odds_15 = 1.75
-                                eligible.append({
-                                    "line": 1.5,
-                                    "probability": pred_15["probability"],
-                                    "odds": odds_15,
-                                    "ev": expected_value(pred_15["probability"], odds_15),
-                                    "prediction_text": f"{shooter['player_name']} +1.5 disparos a puerta",
-                                    "raw_prediction": pred_15["prediction"],
-                                })
-
-                        if not eligible:
+                        if pred_05["probability"] < 0.72:
+                            logger.info(
+                                f"  {shooter['player_name']}: over0.5 prob={pred_05['probability']:.0%} < 72% — descartado"
+                            )
                             continue
 
-                        # Elegir el mercado con mayor EV esperado
-                        best = max(eligible, key=lambda x: x["ev"])
+                        if pred_05["probability"] > 0.85 and hist_over05_rate < 0.50:
+                            logger.warning(
+                                f"  {shooter['player_name']}: over0.5 miscalibrado "
+                                f"(modelo={pred_05['probability']:.0%} vs hist={hist_over05_rate:.0%})"
+                            )
+                            continue
 
+                        odds_05 = 1.55
                         all_candidates.append({
                             "match_id": match_id,
                             "home_team": home_team,
                             "away_team": away_team,
                             "league_name": league_name,
                             "market_type": "player_shots",
-                            "prediction": best["prediction_text"],
-                            "raw_prediction": best["raw_prediction"],
-                            "probability": best["probability"],
-                            "odds": best["odds"],
-                            "expected_value": best["ev"],
+                            "prediction": f"{shooter['player_name']} +0.5 disparos a puerta",
+                            "raw_prediction": pred_05["prediction"],
+                            "probability": pred_05["probability"],
+                            "odds": odds_05,
+                            "expected_value": expected_value(pred_05["probability"], odds_05),
                             "player_name": shooter["player_name"],
                             "player_id": pid,
                             "data_source": "preliminary_shots",
