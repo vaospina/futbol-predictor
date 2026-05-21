@@ -174,8 +174,9 @@ def install_patches(cache):
         filtered = [p for p in lst if p["_date"] and p["_date"] < before]
         return list(reversed(filtered[-n:]))
 
-    def get_match_odds_summary(match_id):
+    def get_match_odds_summary(match_id, before_date=None):
         # Usa odds reales si existen en BD, vacío en caso contrario (→ defaults en feature_engineering)
+        # before_date ignorado en cache: las odds ya son históricas por construcción
         return dict(odds_cache.get(match_id, {}))
 
     # Patch db.models

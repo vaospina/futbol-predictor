@@ -426,6 +426,9 @@ def _fetch_player_sot(api, fixture_id: int, prediction_text: str) -> dict | None
     return None
 
 
+run_evening_evaluation = run_evaluation_check
+
+
 def _get_1x2_result(home_score, away_score, home_team, away_team):
     if home_score > away_score:
         return f"{home_team} gano {home_score}-{away_score}"
