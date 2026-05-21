@@ -13,6 +13,8 @@ logger = get_logger(__name__)
 _FAILURE_COUNT = 0
 _ALERT_SENT = False
 _QUOTA_ALERT_SENT = False
+_LOW_QUOTA_ALERT_SENT = False
+_CRITICAL_QUOTA_ALERT_SENT = False
 
 # Caché de respuestas API con scope de día (se invalida al cambiar la fecha)
 _api_cache: dict = {}  # cache_key -> (date, response)
@@ -84,7 +86,7 @@ class ApiFootballClient:
         return result
 
     def check_status(self) -> dict:
-        global _QUOTA_ALERT_SENT
+        global _QUOTA_ALERT_SENT, _LOW_QUOTA_ALERT_SENT, _CRITICAL_QUOTA_ALERT_SENT
         data = self._get("status")
         response = data.get("response", {})
 
@@ -113,12 +115,41 @@ class ApiFootballClient:
             except Exception:
                 pass
 
+        requests_info = response.get("requests", {})
+        if isinstance(requests_info, dict):
+            current = requests_info.get("current", 0) or 0
+            limit_day = requests_info.get("limit_day", 0) or 0
+            if limit_day > 0:
+                remaining = limit_day - current
+                if remaining < 100 and not _CRITICAL_QUOTA_ALERT_SENT:
+                    _CRITICAL_QUOTA_ALERT_SENT = True
+                    try:
+                        from notifications.telegram import send_telegram
+                        send_telegram(
+                            f"\U0001f6a8 API-Football: solo {remaining} requests restantes.\n"
+                            "Renovar plan Pro URGENTE antes de las 00:00 UTC.",
+                            parse_mode=None,
+                        )
+                    except Exception:
+                        pass
+                elif remaining < 500 and not _LOW_QUOTA_ALERT_SENT:
+                    _LOW_QUOTA_ALERT_SENT = True
+                    try:
+                        from notifications.telegram import send_telegram
+                        send_telegram(
+                            f"⚠️ API-Football: solo {remaining} requests restantes.\n"
+                            "Renovar plan Pro antes de las 00:00 UTC.",
+                            parse_mode=None,
+                        )
+                    except Exception:
+                        pass
+
         return {
             "ok": not data.get("_api_error", False) and not quota_exhausted,
             "quota_exhausted": quota_exhausted,
             "account": response.get("account", {}),
             "subscription": response.get("subscription", {}),
-            "requests": response.get("requests", {}),
+            "requests": requests_info,
         }
 
     def get_fixtures_by_date(self, league_id: int, colombia_date: date, season: int = None):
@@ -158,6 +189,40 @@ class ApiFootballClient:
                 result.append(f)
 
         return result
+
+    def get_all_leagues_fixtures_by_date(self, colombia_date: date, league_ids: set) -> dict:
+        """Fetch fixtures for all given league_ids using two date-only queries (no season filter).
+
+        Using league+season queries fails on Free plan for seasons >2024.
+        Two UTC-date queries cover evening Colombia matches that fall on the next UTC day.
+        Returns dict mapping league_id -> list[fixture].
+        """
+        import pytz
+        from datetime import timedelta
+
+        tz_col = pytz.timezone("America/Bogota")
+        fixtures_by_league: dict = {lid: [] for lid in league_ids}
+        seen_ids: set = set()
+
+        for query_date in [colombia_date, colombia_date + timedelta(days=1)]:
+            data = self._get("fixtures", {"date": query_date.isoformat()})
+            for f in data.get("response", []):
+                fid = f.get("fixture", {}).get("id")
+                lid = f.get("league", {}).get("id")
+                if lid not in league_ids or fid in seen_ids:
+                    continue
+                utc_str = f.get("fixture", {}).get("date", "")
+                if utc_str:
+                    try:
+                        utc_dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
+                        if utc_dt.astimezone(tz_col).date() != colombia_date:
+                            continue
+                    except Exception:
+                        pass
+                seen_ids.add(fid)
+                fixtures_by_league[lid].append(f)
+
+        return fixtures_by_league
 
     def get_fixtures_by_date_range(self, league_id: int, from_date: date, to_date: date, season: int = None):
         season = season or CURRENT_SEASON

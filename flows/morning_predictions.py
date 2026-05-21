@@ -158,11 +158,11 @@ def run_daily_predictions():
         corners_predictor.load()
         shots_predictor.load()
 
-        # 2. Obtener partidos del dia
+        # 2. Obtener partidos del dia (2 queries por fecha, sin filtro league+season)
+        fixtures_by_league = api.get_all_leagues_fixtures_by_date(today, set(ALL_LEAGUES.keys()))
         all_fixtures = []
         for league_id, league_info in ALL_LEAGUES.items():
-            season = league_info.get("season", CURRENT_SEASON)
-            fixtures = api.get_fixtures_by_date(league_id, today, season=season)
+            fixtures = fixtures_by_league.get(league_id, [])
             for f in fixtures:
                 f["_league_info"] = league_info
             all_fixtures.extend(fixtures)
